@@ -21,188 +21,80 @@ SLOT_WIDTH=6
 doc = App.newDocument(DOCUMENT_NAME)
 screw_maker = FastenersCmd.screwMaker
 
-def cutSlot(sketch, slot_width, cx, cy, slot_radius, start_angle, arc_angle):
+def cutSlot(sketch, slot_width=6, cx=0, cy=0, slot_radius=40, start_angle=0, end_angle=180):
+	# angles in degrees, so convert to rads
+	sa = math.radians(start_angle)
+	ea = math.radians(end_angle)
 	# Calculate arc points
 	arc_center = Base.Vector(cx, cy, 0)
 	# create the arc slot
 	# Part.ArcOfCircle(Part.Circle(center,axis,radius),startangle,endangle)
 	geoList = []
-	geoList.append(Part.ArcOfCircle(Part.Circle(arc_center, Base.Vector(0, 0, 1), slot_radius), start_angle, start_angle + arc_angle))
-	geoList.append(Part.ArcOfCircle(Part.Circle(arc_center, Base.Vector(0, 0, 1), slot_radius - slot_width), start_angle, start_angle + arc_angle))
+	geoList.append(Part.ArcOfCircle(Part.Circle(arc_center, Base.Vector(0, 0, 1), slot_radius), sa, ea))
+	geoList.append(Part.ArcOfCircle(Part.Circle(arc_center, Base.Vector(0, 0, 1), slot_radius - slot_width), sa, ea))
 	# TODO rounded slot ends
 	geoList.append(Part.LineSegment(
-		Base.Vector(cx + slot_radius * math.cos(start_angle), cy + slot_radius * math.sin(start_angle), 0),
-		Base.Vector(cx + (slot_radius - slot_width) * math.cos(start_angle), cy + (slot_radius - slot_width) * math.sin(start_angle), 0)))
+		Base.Vector(cx + slot_radius * math.cos(sa), cy + slot_radius * math.sin(sa), 0),
+		Base.Vector(cx + (slot_radius - slot_width) * math.cos(sa), cy + (slot_radius - slot_width) * math.sin(sa), 0)))
+
+	# End point connection
 	geoList.append(Part.LineSegment(
-		Base.Vector(cx + slot_radius * math.cos(start_angle + arc_angle), cy + slot_radius * math.sin(start_angle + arc_angle), 0),
-		Base.Vector(cx + (slot_radius - slot_width) * math.cos(start_angle + arc_angle), cy + (slot_radius - slot_width) * math.sin(start_angle + arc_angle), 0)))
+		Base.Vector(cx + slot_radius * math.cos(ea), cy + slot_radius * math.sin(ea), 0),
+		Base.Vector(cx + (slot_radius - slot_width) * math.cos(ea), cy + (slot_radius - slot_width) * math.sin(ea), 0)))
+
 	sketch.addGeometry(geoList, False)
 
 # makes a whole of a given radius in the given sketch
 # at the given centre x and y
-def makeHole(sketch, cx, cy, radius):
+def makeHole(sketch, x=0, y=0, radius=5):
 	hole = sketch.addGeometry(Part.Circle(
-		Base.Vector(cx, cy, 0),
+		Base.Vector(x, y, 0),
 		Base.Vector(0, 0, 1),
 		radius
 	), False)
 	sketch.addConstraint(Sketcher.Constraint('Radius', hole, radius))
 	return hole
 
-def getDocumentName():
-	return App.ActiveDocument.Name
+def rotateSketch(sketch, plane='xy', angle=90):
+	"""
+	Rotates a sketch into the XZ plane (90 degrees around X axis)
+	Args:
+		sketch: The sketch object to rotate
+	"""
+	rotation = None
+	if plane == 'xz':
+		rotation = App.Rotation(App.Vector(1,0,0), angle)
+	elif plane =='xz':
+		rotation = App.Rotation(App.Vector(0,1,0), angle)
+	else:
+		rotation = App.Rotation(App.Vector(0,0,1), angle)
 
-def createSketch(name) -> 'Sketcher.SketchObject':
-	# create a sketch oriented in the xy plane
-	FreeCADGui.activateWorkbench("SketcherWorkbench")
-	sketch = doc.addObject("Sketcher::SketchObject", name)
-	sketch.Placement = Base.Placement(Base.Vector(0, 0, 0), Base.Rotation(0, 0, 0, 1))
-	return sketch
+	current_placement = sketch.Placement
+	new_placement = App.Placement(
+		current_placement.Base,  # Keep current position
+		rotation.multiply(current_placement.Rotation)  # Apply rotation
+	)
+	sketch.Placement = new_placement
 
-def getSketch(name) -> 'Sketcher.SketchObject':
-	return App.ActiveDocument.getObjectsByLabel(name)[0]
-
-def getPadByName(name):
-	return App.ActiveDocument.getObjectsByLabel(name)[0]
-
-def getSketchFromPad(pad):
-	if not pad: raise ValueError("must pass a pad")
-	g = pad.Group
-	for o in g:
-		if str(type(o)) == "<class 'Sketcher.SketchObject'>":
-			return o
-	return None
-
-def getConstraint(padName, constraintName):
-	pad = getPadByName(padName)
-	sketch = getSketchFromPad(pad)
-	current = sketch.getDatum(constraintName)
-	print(padName +"[" + constraintName + "] : " + str(current.Value))
-
-
-def setConstraint(padName, constraintName, value, units):
-	if not padName or not constraintName or not value or not units: raise ValueError("must pass sensible values")
-	pad = getPadByName(padName)
-	sketch = getSketchFromPad(pad)
-	sketch.setDatum(constraintName, App.Units.Quantity(str(value) + ' ' + units))
-
-
-def create_top_az_disk():
-	doc = App.ActiveDocument
-	# Create a new sketch
-	sketch = doc.addObject('Sketcher::SketchObject', 'top_az_disk')
-	sketch.MapMode = 'FlatFace'
-	# Draw the main disk
-	disk = sketch.addGeometry(Part.Circle(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), DISK_DIAMETER / 2), False)
-	sketch.addConstraint(Sketcher.Constraint('Radius', disk, DISK_DIAMETER / 2))
-	sketch.renameConstraint(disk, u'top-az-disk-radius')
-	units = str(DISK_DIAMETER / 2) + ' mm'
-	sketch.setDatum(disk, App.Units.Quantity(units))
-	# Draw the center hole
-	hole = sketch.addGeometry(Part.Circle(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), 10 / 2), False)
-	sketch.addConstraint(Sketcher.Constraint('Radius', hole, 10 / 2))
-	sketch.renameConstraint(hole, u'top-az-hole-radius')
-	units = str(10 / 2) + ' mm'
-	sketch.setDatum(hole, App.Units.Quantity(units))
-	# Ensure both circles are centered at the same point
-	sketch.addConstraint(Sketcher.Constraint('Coincident', disk, 3, hole, 3))
-	# Draw two semicircular slots
-	slot_radius = SLOT_RADIUS
-	slot_width = SLOT_WIDTH
-	arc_angle = math.pi / 2
-	# Calculate arc points
-	arc1_center = Base.Vector(0, 0, 0)
-	# Create the arc slot
-	geoList = []
-	geoList.append(Part.ArcOfCircle(Part.Circle(arc1_center, Base.Vector(0, 0, 1), slot_radius), 0, arc_angle))
-	geoList.append(Part.ArcOfCircle(Part.Circle(arc1_center, Base.Vector(0, 0, 1), slot_radius - slot_width), 0, arc_angle))
-	# TODO rounded slot ends
-	geoList.append(Part.LineSegment(Base.Vector(slot_radius, 0, 0), Base.Vector(slot_radius - slot_width, 0, 0)))
-	geoList.append(Part.LineSegment(Base.Vector(slot_radius * math.cos(arc_angle), slot_radius * math.sin(arc_angle), 0), Base.Vector((slot_radius - slot_width) * math.cos(arc_angle), (slot_radius - slot_width) * math.sin(arc_angle), 0)))
-	# Create the second arc slot
-	geoList.append(Part.ArcOfCircle(Part.Circle(arc1_center, Base.Vector(0, 0, 1), slot_radius), math.pi, math.pi + arc_angle))
-	geoList.append(Part.ArcOfCircle(Part.Circle(arc1_center, Base.Vector(0, 0, 1), slot_radius - slot_width), math.pi, math.pi + arc_angle))
-	geoList.append(Part.LineSegment(Base.Vector(-slot_radius, 0, 0), Base.Vector(-slot_radius + slot_width, 0, 0)))
-	geoList.append(Part.LineSegment(Base.Vector(-slot_radius * math.cos(arc_angle), -slot_radius * math.sin(arc_angle), 0), Base.Vector((-slot_radius + slot_width) * math.cos(arc_angle), (-slot_radius + slot_width) * math.sin(arc_angle), 0)))
-	# Add geometry to the sketch
-	sketch.addGeometry(geoList, False)
-	sketch.Placement = App.Placement(App.Vector(0, 0, DISK_THICKNESS), App.Rotation(App.Vector(0,0,1),0))
-	#sketch.addConstraint(Sketcher.Constraint('Coincident', arc1_index, 1, line1_index, 1))
-	#sketch.addConstraint(Sketcher.Constraint('Coincident', arc1_index, 2, line1_index, 2))
-	# Extrude the sketch
-	pad = doc.addObject("PartDesign::Pad", "top-az-disk-pad")
-	pad.Profile = sketch
-	pad.Length = DISK_THICKNESS
-	sketch.Visibility = False
-	pad.Visibility = True
-	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
-	# move pad vertically by 6mm
-	#pad.Placement = Base.Placement(Base.Vector(0, 0, DISK_THICKNESS), Base.Rotation(0, 0, 0, 1))
-	create_az_shoulder_bolt()
-	doc.recompute()
-
-def create_bottom_az_disk():
-	doc = App.ActiveDocument
-	# Create a new sketch
-	sketch = doc.addObject('Sketcher::SketchObject', 'bottom_az_disk')
-	sketch.MapMode = 'FlatFace'
-
-	# Draw the main disk
-	disk = sketch.addGeometry(Part.Circle(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), DISK_DIAMETER / 2), False)
-	sketch.addConstraint(Sketcher.Constraint('Radius', disk, DISK_DIAMETER / 2))
-	sketch.renameConstraint(disk, u'bottom-az-disk-radius')
-	units = str(DISK_DIAMETER / 2) + ' mm'
-	sketch.setDatum(disk, App.Units.Quantity(units))
-
-	# Draw the center hole
-	hole = sketch.addGeometry(Part.Circle(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), 10 / 2), False)
-	sketch.addConstraint(Sketcher.Constraint('Radius', hole, TAPPING_SIZE_8 / 2))
-	sketch.renameConstraint(hole, u'bottom-az-hole-radius')
-	units = str(TAPPING_SIZE_8 / 2) + ' mm'
-	sketch.setDatum(hole, App.Units.Quantity(units))
-	# Ensure both circles are centered at the same point
-	sketch.addConstraint(Sketcher.Constraint('Coincident', disk, 3, hole, 3))
-
-	# Draw 4 equidistant holes around a circle of radius 30mm
-	# These holes are for mounting to the tripod/pillar
-	MOUNT_HOLE_RADIUS = 4
-	MOUNT_THREAD_RADIUS = TAPPING_SIZE_6 / 2
-	MOUNT_HOLE_DISTANCE = 30
-	for i in range(4):
-		angle = i * 90
-		x = MOUNT_HOLE_DISTANCE * math.cos(math.radians(angle))
-		y = MOUNT_HOLE_DISTANCE * math.sin(math.radians(angle))
-		h = sketch.addGeometry(Part.Circle(Base.Vector(x, y, 0), Base.Vector(0, 0, 1), MOUNT_HOLE_RADIUS), False)
-		sketch.addConstraint(Sketcher.Constraint('Radius', h, MOUNT_HOLE_RADIUS))
-		#units = str(MOUNT_HOLE_RADIUS) + ' mm'
-
-	# az rotation bolt tightening holes
-	for i in range(2):
-		angle = (i * 180) + SLOT_RADIUS
-		#angle = i * 180
-		center_radius = SLOT_RADIUS - (SLOT_WIDTH/2)  # Position holes at center of slot width
-		x = center_radius * math.cos(math.radians(angle))
-		y = center_radius * math.sin(math.radians(angle))
-		h = sketch.addGeometry(Part.Circle(Base.Vector(x, y, 0), Base.Vector(0, 0, 1), MOUNT_THREAD_RADIUS), False)
-		sketch.addConstraint(Sketcher.Constraint('Radius', h, MOUNT_THREAD_RADIUS))
-		create_az_shoulder_bolt(
-			x=x, y=y,
-			top_diameter=16,
-			top_length=5,
-			middle_diameter=6,
-			middle_length=6,
-			bottom_diameter=6,
-			bottom_length=6
-		)
-
-	# Extrude the sketch
-	pad = doc.addObject("PartDesign::Pad", "bottom-az-disk-pad")
-	pad.Profile = sketch
-	pad.Length = DISK_THICKNESS
-	sketch.Visibility = False
-	pad.Visibility = True
-	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
-	doc.recompute()
+def moveSketch(sketch, x=0, y=0, z=0):
+	"""
+	Moves a sketch by the specified amounts along each axis
+	Args:
+		sketch: The sketch object to move
+		x: Distance to move in X axis (default 0)
+		y: Distance to move in Y axis (default 0)
+		z: Distance to move in Z axis (default 0)
+	"""
+	current_placement = sketch.Placement
+	new_placement = App.Placement(
+		Base.Vector(
+			current_placement.Base.x + x,
+			current_placement.Base.y + y,
+			current_placement.Base.z + z
+		),
+		current_placement.Rotation  # Keep current rotation
+	)
+	sketch.Placement = new_placement
 
 def create_az_shoulder_bolt(
 	top_diameter=16,    # default values match original
@@ -265,36 +157,162 @@ def create_az_shoulder_bolt(
 	doc.recompute()
 	return fusion2
 
+def getDocumentName():
+	return App.ActiveDocument.Name
+
+def createSketch(name) -> 'Sketcher.SketchObject':
+	# create a sketch oriented in the xy plane
+	FreeCADGui.activateWorkbench("SketcherWorkbench")
+	sketch = doc.addObject("Sketcher::SketchObject", name)
+	sketch.Placement = Base.Placement(Base.Vector(0, 0, 0), Base.Rotation(0, 0, 0, 1))
+	return sketch
+
+def getSketch(name) -> 'Sketcher.SketchObject':
+	return App.ActiveDocument.getObjectsByLabel(name)[0]
+
+def getPadByName(name):
+	return App.ActiveDocument.getObjectsByLabel(name)[0]
+
+def getSketchFromPad(pad):
+	if not pad: raise ValueError("must pass a pad")
+	g = pad.Group
+	for o in g:
+		if str(type(o)) == "<class 'Sketcher.SketchObject'>":
+			return o
+	return None
+
+def getConstraint(padName, constraintName):
+	pad = getPadByName(padName)
+	sketch = getSketchFromPad(pad)
+	current = sketch.getDatum(constraintName)
+	print(padName +"[" + constraintName + "] : " + str(current.Value))
+
+
+def setConstraint(padName, constraintName, value, units):
+	if not padName or not constraintName or not value or not units: raise ValueError("must pass sensible values")
+	pad = getPadByName(padName)
+	sketch = getSketchFromPad(pad)
+	sketch.setDatum(constraintName, App.Units.Quantity(str(value) + ' ' + units))
+
+def create_top_az_disk():
+	doc = App.ActiveDocument
+	# Create a new sketch
+	sketch = doc.addObject('Sketcher::SketchObject', 'top_az_disk')
+	sketch.MapMode = 'FlatFace'
+	# Draw the main disk
+	disk = sketch.addGeometry(Part.Circle(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), DISK_DIAMETER / 2), False)
+	sketch.addConstraint(Sketcher.Constraint('Radius', disk, DISK_DIAMETER / 2))
+	sketch.renameConstraint(disk, u'top-az-disk-radius')
+	units = str(DISK_DIAMETER / 2) + ' mm'
+	sketch.setDatum(disk, App.Units.Quantity(units))
+	# Draw the center hole
+	hole = sketch.addGeometry(Part.Circle(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), 10 / 2), False)
+	sketch.addConstraint(Sketcher.Constraint('Radius', hole, 10 / 2))
+	sketch.renameConstraint(hole, u'top-az-hole-radius')
+	units = str(10 / 2) + ' mm'
+	sketch.setDatum(hole, App.Units.Quantity(units))
+	# Ensure both circles are centered at the same point
+	sketch.addConstraint(Sketcher.Constraint('Coincident', disk, 3, hole, 3))
+	# Draw two semicircular slots
+	cutSlot(sketch, slot_width=SLOT_WIDTH, slot_radius=SLOT_RADIUS, start_angle=0, end_angle=90)
+	cutSlot(sketch, slot_width=SLOT_WIDTH, slot_radius=SLOT_RADIUS, start_angle=180, end_angle=270)
+	# rotate the disk allowing for easier placement of later components
+	moveSketch(sketch, z=DISK_THICKNESS)
+	rotateSketch(sketch, angle=45)
+
+	# Extrude the sketch
+	pad = doc.addObject("PartDesign::Pad", "top-az-disk-pad")
+	pad.Profile = sketch
+	pad.Length = DISK_THICKNESS
+	sketch.Visibility = False
+	pad.Visibility = True
+	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
+	# move pad vertically by 6mm
+	create_az_shoulder_bolt()
+	doc.recompute()
+
+def create_bottom_az_disk():
+	doc = App.ActiveDocument
+	# Create a new sketch
+	sketch = doc.addObject('Sketcher::SketchObject', 'bottom_az_disk')
+	sketch.MapMode = 'FlatFace'
+
+	# Draw the main disk
+	disk = sketch.addGeometry(Part.Circle(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), DISK_DIAMETER / 2), False)
+	sketch.addConstraint(Sketcher.Constraint('Radius', disk, DISK_DIAMETER / 2))
+	sketch.renameConstraint(disk, u'bottom-az-disk-radius')
+	units = str(DISK_DIAMETER / 2) + ' mm'
+	sketch.setDatum(disk, App.Units.Quantity(units))
+
+	# Draw the center hole
+	hole = sketch.addGeometry(Part.Circle(Base.Vector(0, 0, 0), Base.Vector(0, 0, 1), 10 / 2), False)
+	sketch.addConstraint(Sketcher.Constraint('Radius', hole, TAPPING_SIZE_8 / 2))
+	sketch.renameConstraint(hole, u'bottom-az-hole-radius')
+	units = str(TAPPING_SIZE_8 / 2) + ' mm'
+	sketch.setDatum(hole, App.Units.Quantity(units))
+	# Ensure both circles are centered at the same point
+	sketch.addConstraint(Sketcher.Constraint('Coincident', disk, 3, hole, 3))
+
+	# Draw 4 equidistant holes around a circle of radius 30mm
+	# These holes are for mounting to the tripod/pillar
+	MOUNT_HOLE_RADIUS = 4
+	MOUNT_THREAD_RADIUS = TAPPING_SIZE_6 / 2
+	MOUNT_HOLE_DISTANCE = 30
+	for i in range(4):
+		angle = i * 90
+		x = MOUNT_HOLE_DISTANCE * math.cos(math.radians(angle))
+		y = MOUNT_HOLE_DISTANCE * math.sin(math.radians(angle))
+		h = sketch.addGeometry(Part.Circle(Base.Vector(x, y, 0), Base.Vector(0, 0, 1), MOUNT_HOLE_RADIUS), False)
+		sketch.addConstraint(Sketcher.Constraint('Radius', h, MOUNT_HOLE_RADIUS))
+		#units = str(MOUNT_HOLE_RADIUS) + ' mm'
+
+	# az rotation bolt tightening holes
+	for i in range(2):
+		angle = (i * 180) + SLOT_RADIUS
+		#angle = i * 180
+		center_radius = SLOT_RADIUS - (SLOT_WIDTH/2)  # Position holes at center of slot width
+		x = center_radius * math.cos(math.radians(angle))
+		y = center_radius * math.sin(math.radians(angle))
+		makeHole(sketch, x=x, y=y, radius=MOUNT_THREAD_RADIUS)
+		# we're going to rotate the sketch by 45 degrees so
+		# we'll add the bolts in a pre-rotated orientation
+		x = center_radius * math.cos(math.radians(angle + 45))
+		y = center_radius * math.sin(math.radians(angle + 45))
+		create_az_shoulder_bolt(
+			x=x, y=y,
+			top_diameter=16,
+			top_length=5,
+			middle_diameter=6,
+			middle_length=6,
+			bottom_diameter=6,
+			bottom_length=6
+		)
+
+	rotateSketch(sketch, angle=45)
+	# Extrude the sketch
+	pad = doc.addObject("PartDesign::Pad", "bottom-az-disk-pad")
+	pad.Profile = sketch
+	pad.Length = DISK_THICKNESS
+	sketch.Visibility = False
+	pad.Visibility = True
+	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
+	doc.recompute()
 
 def create_az_flange(number):
 	doc = App.ActiveDocument
 	# Create a new sketch
 	sketch = doc.addObject('Sketcher::SketchObject', "az_flange_" + str(number))
 
-	# Calculate position and rotation
-	# The slots are at SLOT_RADIUS (45mm) from center
-	# The flange should align with the chord between slot ends at 90 degrees
-	chord_length = 2 * SLOT_RADIUS * math.cos(math.pi/4)  # Distance between slot ends
 	# Define dimensions
-	width = chord_length   # width of rectangle - matches chord length
+	width = 70   # width of rectangle - matches chord length
 	height = 70  # height of rectangle
 	cut = 30      # size of corner cut
-	x = 35
-	ra = -45
+
+	rotateSketch(sketch, plane='xz', angle=90)
 	if (number == 1):
-		rotation = App.Rotation(App.Vector(1,0,0), 90)  # First rotation (to XZ)
-		rotation = rotation.multiply(App.Rotation(App.Vector(0,1,0), ra))  # Second rotation (20° in XY)
-		sketch.Placement = App.Placement(
-			App.Vector(-1 * x, 0, DISK_THICKNESS * 2),  # Position: centered on chord, at disk height
-			rotation
-		)
+		moveSketch(sketch, x=-width/2, y=-26, z=DISK_THICKNESS * 2)
 	else:
-		rotation = App.Rotation(App.Vector(1,0,0), 90)  # First rotation (to XZ)
-		rotation = rotation.multiply(App.Rotation(App.Vector(0,1,0), ra))  # Same rotation as first flange
-		sketch.Placement = App.Placement(
-			App.Vector(0, x, DISK_THICKNESS * 2),  # Position: centered on chord, at disk height
-			rotation
-		)
+		moveSketch(sketch, x=-width/2, y=26, z=DISK_THICKNESS * 2)
 
 	# Define vertices for rectangle with cut corner
 	v1 = App.Vector(0, 0, 0)          # bottom left
@@ -324,15 +342,12 @@ def create_az_flange(number):
 
 	# pivot holes
 	# Add a 10mm diameter hole near the 45-degree cut corner
-	hole_radius = 3  # 10mm diameter = 5mm radius
+	hole_radius = 5.01  # 10mm diameter = 5mm radius
 	# Position the hole center 15mm from both edges (to leave enough material)
 	hole_x = 10  # Move in from the cut corner
 	hole_y = height - 10  # Move down from the top
-
 	makeHole(sketch, hole_x, hole_y, hole_radius)
-	slot_radius = 20
-	slot_width = SLOT_WIDTH
-	cutSlot(sketch, slot_width, hole_x, hole_y, slot_radius, -1.7, math.pi / 1.7)
+	cutSlot(sketch, slot_width=SLOT_WIDTH, slot_radius=25, cx=hole_x, cy=hole_y, start_angle=260, end_angle=5)
 
 	pad = doc.addObject("PartDesign::Pad", "az_flange_pad_" + str(number))
 	pad.Profile = sketch
@@ -358,14 +373,14 @@ def create_alt_flange(number):
 		rotation = App.Rotation(App.Vector(1,0,0), 90)  # First rotation (to XZ)
 		rotation = rotation.multiply(App.Rotation(App.Vector(0,1,0), -45))  # Second rotation (45° in XY)
 		sketch.Placement = App.Placement(
-			App.Vector(0, 0, 65),
+			App.Vector(0, 10, 53),
 			rotation
 		)
 	else:
 		rotation = App.Rotation(App.Vector(1,0,0), 90)  # First rotation (to XZ)
 		rotation = rotation.multiply(App.Rotation(App.Vector(0,1,0), -45))  # Second rotation (45° in XY)
 		sketch.Placement = App.Placement(
-			App.Vector(0, 45, 65),
+			App.Vector(0, 25, 67),
 			rotation
 		)
 
@@ -411,7 +426,6 @@ def create_alt_flange(number):
 	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
 
 	doc.recompute()
-
 
 try:
 	FreeCADGui.ActiveDocument.ActiveView.setAnimationEnabled(False)
