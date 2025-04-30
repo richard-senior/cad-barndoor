@@ -21,6 +21,34 @@ SLOT_WIDTH=6
 doc = App.newDocument(DOCUMENT_NAME)
 screw_maker = FastenersCmd.screwMaker
 
+def cutSlot(sketch, slot_width, cx, cy, slot_radius, start_angle, arc_angle):
+	# Calculate arc points
+	arc_center = Base.Vector(cx, cy, 0)
+	# create the arc slot
+	# Part.ArcOfCircle(Part.Circle(center,axis,radius),startangle,endangle)
+	geoList = []
+	geoList.append(Part.ArcOfCircle(Part.Circle(arc_center, Base.Vector(0, 0, 1), slot_radius), start_angle, start_angle + arc_angle))
+	geoList.append(Part.ArcOfCircle(Part.Circle(arc_center, Base.Vector(0, 0, 1), slot_radius - slot_width), start_angle, start_angle + arc_angle))
+	# TODO rounded slot ends
+	geoList.append(Part.LineSegment(
+		Base.Vector(cx + slot_radius * math.cos(start_angle), cy + slot_radius * math.sin(start_angle), 0),
+		Base.Vector(cx + (slot_radius - slot_width) * math.cos(start_angle), cy + (slot_radius - slot_width) * math.sin(start_angle), 0)))
+	geoList.append(Part.LineSegment(
+		Base.Vector(cx + slot_radius * math.cos(start_angle + arc_angle), cy + slot_radius * math.sin(start_angle + arc_angle), 0),
+		Base.Vector(cx + (slot_radius - slot_width) * math.cos(start_angle + arc_angle), cy + (slot_radius - slot_width) * math.sin(start_angle + arc_angle), 0)))
+	sketch.addGeometry(geoList, False)
+
+# makes a whole of a given radius in the given sketch
+# at the given centre x and y
+def makeHole(sketch, cx, cy, radius):
+	hole = sketch.addGeometry(Part.Circle(
+		Base.Vector(cx, cy, 0),
+		Base.Vector(0, 0, 1),
+		radius
+	), False)
+	sketch.addConstraint(Sketcher.Constraint('Radius', hole, radius))
+	return hole
+
 def getDocumentName():
 	return App.ActiveDocument.Name
 
@@ -238,10 +266,10 @@ def create_az_shoulder_bolt(
 	return fusion2
 
 
-def create_alt_flange(number):
+def create_az_flange(number):
 	doc = App.ActiveDocument
 	# Create a new sketch
-	sketch = doc.addObject('Sketcher::SketchObject', "alt_flange_" + str(number))
+	sketch = doc.addObject('Sketcher::SketchObject', "az_flange_" + str(number))
 
 	# Calculate position and rotation
 	# The slots are at SLOT_RADIUS (45mm) from center
@@ -296,61 +324,17 @@ def create_alt_flange(number):
 
 	# pivot holes
 	# Add a 10mm diameter hole near the 45-degree cut corner
-	hole_radius = 5  # 10mm diameter = 5mm radius
+	hole_radius = 3  # 10mm diameter = 5mm radius
 	# Position the hole center 15mm from both edges (to leave enough material)
 	hole_x = 10  # Move in from the cut corner
 	hole_y = height - 10  # Move down from the top
 
-	hole = sketch.addGeometry(Part.Circle(
-		Base.Vector(hole_x, hole_y, 0),  # position
-		Base.Vector(0, 0, 1),            # normal vector
-		hole_radius                       # radius
-	), False)
-
-	# Add radius constraint
-	sketch.addConstraint(Sketcher.Constraint('Radius', hole, hole_radius))
-
-	slot_radius = 30
+	makeHole(sketch, hole_x, hole_y, hole_radius)
+	slot_radius = 20
 	slot_width = SLOT_WIDTH
-	start_angle = (-3 * math.pi/4) + math.pi  # 225 + 180 = 405 degrees (1 o'clock)
-	end_angle = (-math.pi/3) + math.pi        # 300 + 180 = 480 degrees (4 o'clock)
+	cutSlot(sketch, slot_width, hole_x, hole_y, slot_radius, -1.7, math.pi / 1.7)
 
-	# Calculate arc points
-	arc1_center = Base.Vector(hole_x, hole_y, 0)
-	geoList = []
-	geoList.append(Part.ArcOfCircle(Part.Circle(arc1_center, Base.Vector(0, 0, 1), slot_radius), start_angle, end_angle))
-	geoList.append(Part.ArcOfCircle(Part.Circle(arc1_center, Base.Vector(0, 0, 1), slot_radius - slot_width), end_angle, start_angle))
-
-	# Calculate end points relative to the new center
-	# First arc endpoints
-	outer_start = Base.Vector(
-		hole_x + slot_radius * math.cos(start_angle),
-		hole_y + slot_radius * math.sin(start_angle),
-		0
-	)
-	outer_end = Base.Vector(
-		hole_x + slot_radius * math.cos(end_angle),
-		hole_y + slot_radius * math.sin(end_angle),
-		0
-	)
-	# Inner arc endpoints
-	inner_start = Base.Vector(
-		hole_x + (slot_radius - slot_width) * math.cos(end_angle),
-		hole_y + (slot_radius - slot_width) * math.sin(end_angle),
-		0
-	)
-	inner_end = Base.Vector(
-		hole_x + (slot_radius - slot_width) * math.cos(start_angle),
-		hole_y + (slot_radius - slot_width) * math.sin(start_angle),
-		0
-	)
-	# Add the connecting lines between arcs
-	geoList.append(Part.LineSegment(outer_start, inner_start))  # Start side connection
-	geoList.append(Part.LineSegment(outer_end, inner_end))     # End side connection
-
-	sketch.addGeometry(geoList, False)
-
-	pad = doc.addObject("PartDesign::Pad", "alt_flange_pad_" + str(number))
+	pad = doc.addObject("PartDesign::Pad", "az_flange_pad_" + str(number))
 	pad.Profile = sketch
 	pad.Length = DISK_THICKNESS
 	if number == 1:
@@ -358,13 +342,83 @@ def create_alt_flange(number):
 	sketch.Visibility = False
 	pad.Visibility = True
 	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
+	pad.ViewObject.Transparency = 70
+	doc.recompute()
+
+def create_alt_flange(number):
+	doc = App.ActiveDocument
+	# Create a new sketch
+	sketch = doc.addObject('Sketcher::SketchObject', "alt_flange_" + str(number))
+
+	# Define dimensions
+	height = 35      # rectangle height
+	width = 40      # rectangle width
+
+	if number == 1:
+		rotation = App.Rotation(App.Vector(1,0,0), 90)  # First rotation (to XZ)
+		rotation = rotation.multiply(App.Rotation(App.Vector(0,1,0), -45))  # Second rotation (45° in XY)
+		sketch.Placement = App.Placement(
+			App.Vector(0, 0, 65),
+			rotation
+		)
+	else:
+		rotation = App.Rotation(App.Vector(1,0,0), 90)  # First rotation (to XZ)
+		rotation = rotation.multiply(App.Rotation(App.Vector(0,1,0), -45))  # Second rotation (45° in XY)
+		sketch.Placement = App.Placement(
+			App.Vector(0, 45, 65),
+			rotation
+		)
+
+	# Define vertices for rectangle (going clockwise from top left)
+	v1 = App.Vector(0, height/2, 0)           # top left
+	v2 = App.Vector(0, -height/2, 0)          # bottom left
+	v3 = App.Vector(width, -height/2, 0)      # bottom right
+	v4 = App.Vector(width, height/2, 0)       # top right
+
+	# Add line segments in order
+	lines = [
+		Part.LineSegment(v1, v2),  # left vertical
+		Part.LineSegment(v2, v3),  # bottom horizontal
+		Part.LineSegment(v3, v4),  # right vertical
+		Part.LineSegment(v4, v1)   # top horizontal
+	]
+
+	# Add all line segments to sketch
+	for line in lines:
+		sketch.addGeometry(line)
+
+	# Add coincident constraints - ensuring each vertex connects properly
+	for i in range(len(lines)):
+		next_i = (i + 1) % len(lines)
+		sketch.addConstraint(Sketcher.Constraint("Coincident", i, 2, next_i, 1))
+
+	# Add horizontal/vertical constraints
+	sketch.addConstraint(Sketcher.Constraint("Vertical", 0))    # left
+	sketch.addConstraint(Sketcher.Constraint("Horizontal", 1))  # bottom
+	sketch.addConstraint(Sketcher.Constraint("Vertical", 2))    # right
+	sketch.addConstraint(Sketcher.Constraint("Horizontal", 3))  # top
+
+	# Add dimensions
+	sketch.addConstraint(Sketcher.Constraint("Distance", 0, height))    # height
+	sketch.addConstraint(Sketcher.Constraint("Distance", 1, width))     # width
+
+	# Create the pad
+	pad = doc.addObject("PartDesign::Pad", "alt_flange_pad_" + str(number))
+	pad.Profile = sketch
+	pad.Length = DISK_THICKNESS
+	sketch.Visibility = False
+	pad.Visibility = True
+	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
 
 	doc.recompute()
+
 
 try:
 	FreeCADGui.ActiveDocument.ActiveView.setAnimationEnabled(False)
 	create_top_az_disk()
 	create_bottom_az_disk()
+	create_az_flange(1)
+	create_az_flange(2)
 	create_alt_flange(1)
 	create_alt_flange(2)
 	FreeCADGui.ActiveDocument.ActiveView.setAnimationEnabled(True)
