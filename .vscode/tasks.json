@@ -1,0 +1,19 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run FreeCAD Macro",
+            "type": "shell",
+            "command": "export PATH=/Applications/FreeCAD.app/Contents/MacOS:$PATH && FreeCAD -c \"${workspaceFolder}/macro.py\"",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

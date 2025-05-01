@@ -8,7 +8,7 @@ import FastenerBase
 import FastenersCmd
 import Sketcher  # Added this import
 
-DOCUMENT_NAME="BarnDoor1"
+DOCUMENT_NAME="BarnDoor"
 # Dimensions in mm
 DISK_DIAMETER = 100
 DISK_THICKNESS = 6
@@ -17,9 +17,9 @@ TAPPING_SIZE_6 = 5
 SLOT_RADIUS = 45
 SLOT_WIDTH=6
 
-# Create a new document
-doc = App.newDocument(DOCUMENT_NAME)
-screw_maker = FastenersCmd.screwMaker
+# global variable to hold the document
+doc = None
+# screw_maker = FastenersCmd.screwMaker
 
 def cutSlot(sketch, slot_width=6, cx=0, cy=0, slot_radius=40, start_angle=0, end_angle=180):
 	# angles in degrees, so convert to rads
@@ -306,7 +306,7 @@ def create_az_flange(number):
 	# Define dimensions
 	width = 70   # width of rectangle - matches chord length
 	height = 70  # height of rectangle
-	cut = 30      # size of corner cut
+	cut = 20      # size of corner cut
 
 	rotateSketch(sketch, plane='xz', angle=90)
 	if (number == 1):
@@ -344,10 +344,11 @@ def create_az_flange(number):
 	# Add a 10mm diameter hole near the 45-degree cut corner
 	hole_radius = 5.01  # 10mm diameter = 5mm radius
 	# Position the hole center 15mm from both edges (to leave enough material)
-	hole_x = 10  # Move in from the cut corner
-	hole_y = height - 10  # Move down from the top
+	hole_x = 25  # Move in from the cut corner
+	hole_y = height - 25  # Move down from the top
+	slot_radius=20
 	makeHole(sketch, hole_x, hole_y, hole_radius)
-	cutSlot(sketch, slot_width=SLOT_WIDTH, slot_radius=25, cx=hole_x, cy=hole_y, start_angle=260, end_angle=5)
+	cutSlot(sketch, slot_width=SLOT_WIDTH, slot_radius=slot_radius, cx=hole_x, cy=hole_y, start_angle=250, end_angle=15)
 
 	pad = doc.addObject("PartDesign::Pad", "az_flange_pad_" + str(number))
 	pad.Profile = sketch
@@ -364,25 +365,10 @@ def create_alt_flange(number):
 	doc = App.ActiveDocument
 	# Create a new sketch
 	sketch = doc.addObject('Sketcher::SketchObject', "alt_flange_" + str(number))
-
+	rotateSketch(sketch, plane="xz", angle=90)
 	# Define dimensions
-	height = 35      # rectangle height
-	width = 40      # rectangle width
-
-	if number == 1:
-		rotation = App.Rotation(App.Vector(1,0,0), 90)  # First rotation (to XZ)
-		rotation = rotation.multiply(App.Rotation(App.Vector(0,1,0), -45))  # Second rotation (45° in XY)
-		sketch.Placement = App.Placement(
-			App.Vector(0, 10, 53),
-			rotation
-		)
-	else:
-		rotation = App.Rotation(App.Vector(1,0,0), 90)  # First rotation (to XZ)
-		rotation = rotation.multiply(App.Rotation(App.Vector(0,1,0), -45))  # Second rotation (45° in XY)
-		sketch.Placement = App.Placement(
-			App.Vector(0, 25, 67),
-			rotation
-		)
+	height = 50      # rectangle height
+	width = 50      # rectangle width
 
 	# Define vertices for rectangle (going clockwise from top left)
 	v1 = App.Vector(0, height/2, 0)           # top left
@@ -417,6 +403,19 @@ def create_alt_flange(number):
 	sketch.addConstraint(Sketcher.Constraint("Distance", 0, height))    # height
 	sketch.addConstraint(Sketcher.Constraint("Distance", 1, width))     # width
 
+	hole_x = 25
+	hole_y = 0
+	makeHole(sketch, x=hole_x, y=hole_y, radius=5.01)
+	makeHole(sketch, x=hole_x + 20 - (SLOT_WIDTH/2), y=hole_y, radius=TAPPING_SIZE_6 / 2)
+
+	x = -width + 15
+	z = height + 7
+	if number == 1:
+		moveSketch(sketch, x=x, y=20, z=z)
+	else:
+		y = -20 + (DISK_THICKNESS)
+		moveSketch(sketch, x=x, y=y, z=z)
+
 	# Create the pad
 	pad = doc.addObject("PartDesign::Pad", "alt_flange_pad_" + str(number))
 	pad.Profile = sketch
@@ -427,7 +426,23 @@ def create_alt_flange(number):
 
 	doc.recompute()
 
+def deleteExistingDocument(name):
+	"""
+	Deletes any existing document with the specified name
+	Args:
+		name: The name of the document to delete
+	"""
+	# Check if a document with this name already exists
+	for doc in App.listDocuments().values():
+		if doc.Name == name:
+			print(f"Deleting existing document: {name}")
+			App.closeDocument(name)
+			break
+
 try:
+	# Delete existing document if it exists
+	deleteExistingDocument(DOCUMENT_NAME)
+	doc = App.newDocument(DOCUMENT_NAME)
 	FreeCADGui.ActiveDocument.ActiveView.setAnimationEnabled(False)
 	create_top_az_disk()
 	create_bottom_az_disk()

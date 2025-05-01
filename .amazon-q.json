@@ -1,0 +1,38 @@
+{
+    "name": "cad-barndoor",
+    "type": "python",
+    "system_prompt": "You are assisting with the design of a 'Barn Door Tracker' for the purpose of astrophotography. We will be writing a python macro which runs in FreeCAD",
+    "details": {
+        "purpose": "Generates 3D models of a barn door tracker and RA mount for astrophotography equipment",
+        "technologies": [
+            "Python",
+            "FreeCAD",
+            "CAD"
+        ],
+        "components": [
+            "Barn door tracker design",
+            "RA mount design"
+        ],
+        "dependencies": {
+            "software": [
+                "FreeCAD",
+                "FreeCAD Workbenches"
+            ],
+            "python_modules": [
+                "FreeCAD Python API"
+            ]
+        }
+    },
+    "context": {
+        "domain": "Astrophotography Equipment Design",
+        "usage": "Run as a FreeCAD macro to generate 3D models for fabrication",
+        "target_users": "Astrophotographers and DIY telescope mount builders"
+    },
+    "technical_notes": {
+        "execution_environment": "FreeCAD GUI",
+        "file_types": [
+            ".py (Python macro)",
+            ".FCStd (FreeCAD document)"
+        ]
+    }
+}
