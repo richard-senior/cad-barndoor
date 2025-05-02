@@ -7,6 +7,7 @@ import FreeCADGui
 import FastenerBase
 import FastenersCmd
 import Sketcher  # Added this import
+import os
 
 DOCUMENT_NAME="BarnDoor"
 # Dimensions in mm
@@ -55,6 +56,68 @@ def makeHole(sketch, x=0, y=0, radius=5):
 	sketch.addConstraint(Sketcher.Constraint('Radius', hole, radius))
 	return hole
 
+def moveObject(obj, x=0, y=0, z=0):
+	"""
+	Moves any FreeCAD object by the specified amounts along each axis
+
+	Args:
+		obj: The FreeCAD object to move (pad, part, body, etc.)
+		x: Distance to move in X axis (default 0)
+		y: Distance to move in Y axis (default 0)
+		z: Distance to move in Z axis (default 0)
+	"""
+	# Check if the object has a Placement property
+	if not hasattr(obj, "Placement"):
+		print(f"Error: Object {obj.Name} does not have a Placement property")
+		return
+
+	current_placement = obj.Placement
+	new_placement = App.Placement(
+		Base.Vector(
+			current_placement.Base.x + x,
+			current_placement.Base.y + y,
+			current_placement.Base.z + z
+		),
+		current_placement.Rotation  # Keep current rotation
+	)
+	obj.Placement = new_placement
+
+	# Recompute the document to update the view
+	doc.recompute()
+
+def rotateObject(obj, plane='xy', angle=90):
+	"""
+	Rotates any FreeCAD object around the specified axis
+
+	Args:
+		obj: The FreeCAD object to rotate (pad, part, body, etc.)
+		plane: Rotation plane ('xy', 'yz', or 'xz')
+		angle: Rotation angle in degrees
+	"""
+	# Check if the object has a Placement property
+	if not hasattr(obj, "Placement"):
+		print(f"Error: Object {obj.Name} does not have a Placement property")
+		return
+
+	# Determine rotation axis based on plane
+	rotation = None
+	if plane == 'xz':
+		rotation = App.Rotation(App.Vector(1, 0, 0), angle)  # Rotate around X axis
+	elif plane == 'yz':
+		rotation = App.Rotation(App.Vector(0, 1, 0), angle)  # Rotate around Y axis
+	else:  # Default to xy plane
+		rotation = App.Rotation(App.Vector(0, 0, 1), angle)  # Rotate around Z axis
+
+	current_placement = obj.Placement
+	new_placement = App.Placement(
+		current_placement.Base,  # Keep current position
+		rotation.multiply(current_placement.Rotation)  # Apply rotation
+	)
+	obj.Placement = new_placement
+
+	# Recompute the document to update the view
+	doc.recompute()
+
 def rotateSketch(sketch, plane='xy', angle=90):
 	"""
 	Rotates a sketch into the XZ plane (90 degrees around X axis)
@@ -96,66 +159,255 @@ def moveSketch(sketch, x=0, y=0, z=0):
 	)
 	sketch.Placement = new_placement
 
-def create_az_shoulder_bolt(
-	top_diameter=16,    # default values match original
-	top_length=5,
-	middle_diameter=10,
-	middle_length=6,
-	bottom_diameter=8,
-	bottom_length=6,
-	x=0,
-	y=0,
-):
+def addArcSegment(sketch, start_point, end_point, radius=None, center=None):
+	"""
+	Adds an arc segment to a sketch between two points.
 
-	# Create the three sections
-	top_section = Part.makeCylinder(
-		top_diameter/2,     # radius
-		top_length,         # height
-		Base.Vector(x,y,middle_length + bottom_length)  # position
-	)
+	Args:
+		sketch: The sketch object to add the arc to
+		start_point: Starting point (x,y) tuple or Base.Vector
+		end_point: Ending point (x,y) tuple or Base.Vector
+		radius: Optional radius of the arc
+		center: Optional center point of the arc
 
-	middle_section = Part.makeCylinder(
-		middle_diameter/2,  # radius
-		middle_length,      # height
-		Base.Vector(x,y,bottom_length)  # position
-	)
+	Returns:
+		Index of the created geometry
+	"""
+	# Convert tuples to vectors if needed
+	if isinstance(start_point, tuple):
+		start_point = Base.Vector(start_point[0], start_point[1], 0)
+	if isinstance(end_point, tuple):
+		end_point = Base.Vector(end_point[0], end_point[1], 0)
 
-	bottom_section = Part.makeCylinder(
-		bottom_diameter/2,  # radius
-		bottom_length,      # height
-		Base.Vector(x,y,0)  # position
-	)
+	# If center is not provided, we need to calculate it
+	if center is None:
+		if radius is None:
+			# Without radius or center, create a default arc (semi-circle)
+			mid_point = Base.Vector(
+				(start_point.x + end_point.x) / 2,
+				(start_point.y + end_point.y) / 2,
+				0
+			)
 
-	# Create the parts
-	top_part = doc.addObject("Part::Feature", "bolt_top")
-	top_part.Shape = top_section
+			# Calculate perpendicular direction for center
+			direction = Base.Vector(end_point.x - start_point.x, end_point.y - start_point.y, 0)
+			perpendicular = Base.Vector(-direction.y, direction.x, 0)
+			perpendicular.normalize()
 
-	middle_part = doc.addObject("Part::Feature", "bolt_middle")
-	middle_part.Shape = middle_section
+			# Distance between points
+			chord_length = ((end_point.x - start_point.x)**2 + (end_point.y - start_point.y)**2)**0.5
 
-	bottom_part = doc.addObject("Part::Feature", "bolt_bottom")
-	bottom_part.Shape = bottom_section
+			# For a semi-circle, the center is at distance r from midpoint
+			# where r = chord_length/2
+			center = mid_point.add(perpendicular.multiply(chord_length/2))
+			radius = chord_length/2
+		else:
+			# With radius but no center, we need to find the center
+			# This is a bit more complex - we need to find a point that is
+			# radius distance from both start and end points
 
-	# Union the parts together
-	fusion1 = doc.addObject("Part::Fuse", "fusion1")
-	fusion1.Base = top_part
-	fusion1.Tool = middle_part
+			# First find midpoint of the chord
+			mid_point = Base.Vector(
+				(start_point.x + end_point.x) / 2,
+				(start_point.y + end_point.y) / 2,
+				0
+			)
 
-	fusion2 = doc.addObject("Part::Fuse", "shoulder_bolt")
-	fusion2.Base = fusion1
-	fusion2.Tool = bottom_part
+			# Calculate perpendicular direction
+			direction = Base.Vector(end_point.x - start_point.x, end_point.y - start_point.y, 0)
+			perpendicular = Base.Vector(-direction.y, direction.x, 0)
+			perpendicular.normalize()
 
-	# Hide intermediate parts
-	top_part.Visibility = False
-	middle_part.Visibility = False
-	bottom_part.Visibility = False
-	fusion1.Visibility = False
+			# Distance between points
+			chord_length = ((end_point.x - start_point.x)**2 + (end_point.y - start_point.y)**2)**0.5
 
-	# Set the color
-	fusion2.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
+			# Calculate how far from midpoint the center is
+			# Using Pythagoras: radius² = (chord_length/2)² + h²
+			# where h is the height we need to calculate
+			if radius < chord_length/2:
+				# Radius too small to create an arc between these points
+				print("Error: Radius too small to create arc between points")
+				return None
+
+			h = (radius**2 - (chord_length/2)**2)**0.5
+
+			# Center is h units from midpoint in perpendicular direction
+			center = mid_point.add(perpendicular.multiply(h))
+
+	# Create the circle that our arc will be part of
+	circle = Part.Circle(center, Base.Vector(0, 0, 1), radius)
+
+	# Calculate the angles for start and end points
+	start_angle = circle.parameter(start_point)
+	end_angle = circle.parameter(end_point)
+
+	# Create the arc
+	arc = Part.ArcOfCircle(circle, start_angle, end_angle)
+
+	# Add to sketch
+	return sketch.addGeometry(arc)
+
+def drawShape(points, name="shape"):
+	# Validate input
+	if not points or len(points) < 2:
+		print("Error: At least 2 points are required to create a sketch")
+		return None
+
+	sketch = doc.addObject("Sketcher::SketchObject", name)
+
+	# Add segments connecting each point
+	geometries = []
+	for i in range(len(points) - 1):
+		start_point = (points[i].get("x", 0), points[i].get("y", 0))
+		end_point = (points[i+1].get("x", 0), points[i+1].get("y", 0))
+
+		# Check if this segment should be an arc
+		if points[i+1].get("connector") == "a":
+			# Get center if provided, otherwise pass None
+			center = None
+			if "cx" in points[i+1] and "cy" in points[i+1]:
+				center = Base.Vector(points[i+1]["cx"], points[i+1]["cy"], 0)
+
+			# Calculate radius if center is provided
+			radius = None
+			if center:
+				# Calculate radius from center to start point
+				dx = start_point[0] - center.x
+				dy = start_point[1] - center.y
+				radius = (dx**2 + dy**2)**0.5
+
+			# Add arc segment
+			geo_idx = addArcSegment(sketch, start_point, end_point, radius, center)
+		else:
+			# Add line segment
+			geo_idx = sketch.addGeometry(Part.LineSegment(
+				Base.Vector(start_point[0], start_point[1], 0),
+				Base.Vector(end_point[0], end_point[1], 0)
+			))
+
+		geometries.append(geo_idx)
+
+	# Check if the shape is already closed
+	first_x = points[0].get("x", 0)
+	first_y = points[0].get("y", 0)
+	last_x = points[-1].get("x", 0)
+	last_y = points[-1].get("y", 0)
+
+	# If not closed, add a final segment to close the shape
+	if first_x != last_x or first_y != last_y:
+		# Check if the closing segment should be an arc
+		if points[0].get("connector") == "a":
+			# Get center if provided, otherwise pass None
+			center = None
+			if "cx" in points[0] and "cy" in points[0]:
+				center = Base.Vector(points[0]["cx"], points[0]["cy"], 0)
+
+			# Calculate radius if center is provided
+			radius = None
+			if center:
+				# Calculate radius from center to end point
+				dx = last_x - center.x
+				dy = last_y - center.y
+				radius = (dx**2 + dy**2)**0.5
+
+			# Add arc segment
+			geo_idx = addArcSegment(sketch, (last_x, last_y), (first_x, first_y), radius, center)
+		else:
+			# Add line segment
+			geo_idx = sketch.addGeometry(Part.LineSegment(
+				Base.Vector(last_x, last_y, 0),
+				Base.Vector(first_x, first_y, 0)
+			))
+
+		geometries.append(geo_idx)
+
+	# Add coincident constraints between segments
+	for i in range(len(geometries) - 1):
+		sketch.addConstraint(Sketcher.Constraint("Coincident", geometries[i], 2, geometries[i+1], 1))
+
+	# Close the loop with a constraint if we have more than one segment
+	if len(geometries) > 1:
+		sketch.addConstraint(Sketcher.Constraint("Coincident", geometries[-1], 2, geometries[0], 1))
+
+	# Add geometric constraints for line segments (but avoid redundant constraints)
+	added_horizontal = set()
+	added_vertical = set()
+
+	for i, geo_idx in enumerate(geometries):
+		geo = sketch.Geometry[geo_idx]
+
+		# Only apply horizontal/vertical constraints to line segments
+		if isinstance(geo, Part.LineSegment):
+			start = geo.StartPoint
+			end = geo.EndPoint
+
+			# Check if line is horizontal or vertical (with small tolerance)
+			dx = abs(end.x - start.x)
+			dy = abs(end.y - start.y)
+
+			if dx < 0.001 and dy > 0.001 and geo_idx not in added_vertical:  # Vertical line
+				sketch.addConstraint(Sketcher.Constraint("Vertical", geo_idx))
+				added_vertical.add(geo_idx)
+			elif dy < 0.001 and dx > 0.001 and geo_idx not in added_horizontal:  # Horizontal line
+				sketch.addConstraint(Sketcher.Constraint("Horizontal", geo_idx))
+				added_horizontal.add(geo_idx)
+
+	# Add dimensional constraints for line segments (but be more selective)
+	# Only add dimensions for key features, not for every line
+	key_dimensions = []
+	if len(geometries) > 0:
+		key_dimensions.append(geometries[0])  # First segment
+	if len(geometries) > 2:
+		key_dimensions.append(geometries[len(geometries)//2])  # Middle segment
+
+	for geo_idx in key_dimensions:
+		geo = sketch.Geometry[geo_idx]
+
+		if isinstance(geo, Part.LineSegment):
+			start = geo.StartPoint
+			end = geo.EndPoint
+			length = ((end.x - start.x)**2 + (end.y - start.y)**2)**0.5
+
+			# Only add dimensional constraints for non-zero length lines
+			if length > 0.001:
+				sketch.addConstraint(Sketcher.Constraint("Distance", geo_idx, length))
 
 	doc.recompute()
-	return fusion2
+	return sketch
+
+def draw_bolt(sections, name="cylinder_profile", start_y=0):
+	profile_points = []
+	current_y = start_y
+	profile_points.append({"x": 0, "y": current_y})
+	# Process each section to create the profile
+	for i, section in enumerate(sections):
+		# Get diameter and length from the section
+		diameter = section.get('d', 10)  # Default to 10 if not specified
+		length = section.get('l', 10)    # Default to 10 if not specified
+		# Calculate radius
+		radius = diameter / 2
+		# Add the bottom-right corner of this section
+		profile_points.append({"x": radius, "y": current_y})
+		# Update the current Y position
+		current_y += length
+		# Add the top-right corner of this section
+		profile_points.append({"x": radius, "y": current_y})
+
+	# Add the final point back to the axis
+	profile_points.append({"x": 0, "y": current_y})
+
+	# Draw the profile using drawShape
+	sketch = drawShape(profile_points, name)
+
+	doc.recompute()
+	revolution = doc.addObject("Part::Revolution", name)
+	revolution.Source = sketch
+	revolution.Axis = Base.Vector(0.0, 1.0, 0.0)  # Y axis
+	revolution.Base = Base.Vector(0.0, 0.0, 0.0)
+	revolution.Angle = 360.0
+	sketch.Visibility = False
+	doc.recompute()
+	return revolution
 
 def getDocumentName():
 	return App.ActiveDocument.Name
@@ -195,7 +447,6 @@ def setConstraint(padName, constraintName, value, units):
 	sketch.setDatum(constraintName, App.Units.Quantity(str(value) + ' ' + units))
 
 def create_top_az_disk():
-	doc = App.ActiveDocument
 	# Create a new sketch
 	sketch = doc.addObject('Sketcher::SketchObject', 'top_az_disk')
 	sketch.MapMode = 'FlatFace'
@@ -227,12 +478,9 @@ def create_top_az_disk():
 	sketch.Visibility = False
 	pad.Visibility = True
 	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
-	# move pad vertically by 6mm
-	create_az_shoulder_bolt()
 	doc.recompute()
 
 def create_bottom_az_disk():
-	doc = App.ActiveDocument
 	# Create a new sketch
 	sketch = doc.addObject('Sketcher::SketchObject', 'bottom_az_disk')
 	sketch.MapMode = 'FlatFace'
@@ -278,15 +526,6 @@ def create_bottom_az_disk():
 		# we'll add the bolts in a pre-rotated orientation
 		x = center_radius * math.cos(math.radians(angle + 45))
 		y = center_radius * math.sin(math.radians(angle + 45))
-		create_az_shoulder_bolt(
-			x=x, y=y,
-			top_diameter=16,
-			top_length=5,
-			middle_diameter=6,
-			middle_length=6,
-			bottom_diameter=6,
-			bottom_length=6
-		)
 
 	rotateSketch(sketch, angle=45)
 	# Extrude the sketch
@@ -299,7 +538,6 @@ def create_bottom_az_disk():
 	doc.recompute()
 
 def create_az_flange(number):
-	doc = App.ActiveDocument
 	# Create a new sketch
 	sketch = doc.addObject('Sketcher::SketchObject', "az_flange_" + str(number))
 
@@ -362,60 +600,26 @@ def create_az_flange(number):
 	doc.recompute()
 
 def create_alt_flange(number):
-	doc = App.ActiveDocument
-	# Create a new sketch
-	sketch = doc.addObject('Sketcher::SketchObject', "alt_flange_" + str(number))
-	rotateSketch(sketch, plane="xz", angle=90)
 	# Define dimensions
 	height = 50      # rectangle height
-	width = 50      # rectangle width
+	width = 50       # rectangle width
 
-	# Define vertices for rectangle (going clockwise from top left)
-	v1 = App.Vector(0, height/2, 0)           # top left
-	v2 = App.Vector(0, -height/2, 0)          # bottom left
-	v3 = App.Vector(width, -height/2, 0)      # bottom right
-	v4 = App.Vector(width, height/2, 0)       # top right
-
-	# Add line segments in order
-	lines = [
-		Part.LineSegment(v1, v2),  # left vertical
-		Part.LineSegment(v2, v3),  # bottom horizontal
-		Part.LineSegment(v3, v4),  # right vertical
-		Part.LineSegment(v4, v1)   # top horizontal
+	# Define the flange profile points using the dictionary format
+	p = [
+		{"x": 0, "y": height/2},           # top left
+		{"x": 0, "y": -height/2},          # bottom left
+		{"x": width, "y": -height/2},      # bottom right
+		{"x": width, "y": height/2},       # top right
+		{"x": 0, "y": height/2}            # back to top left to close the shape
 	]
 
-	# Add all line segments to sketch
-	for line in lines:
-		sketch.addGeometry(line)
-
-	# Add coincident constraints - ensuring each vertex connects properly
-	for i in range(len(lines)):
-		next_i = (i + 1) % len(lines)
-		sketch.addConstraint(Sketcher.Constraint("Coincident", i, 2, next_i, 1))
-
-	# Add horizontal/vertical constraints
-	sketch.addConstraint(Sketcher.Constraint("Vertical", 0))    # left
-	sketch.addConstraint(Sketcher.Constraint("Horizontal", 1))  # bottom
-	sketch.addConstraint(Sketcher.Constraint("Vertical", 2))    # right
-	sketch.addConstraint(Sketcher.Constraint("Horizontal", 3))  # top
-
-	# Add dimensions
-	sketch.addConstraint(Sketcher.Constraint("Distance", 0, height))    # height
-	sketch.addConstraint(Sketcher.Constraint("Distance", 1, width))     # width
-
+	# Draw the flange profile using drawShape
+	sketch = drawShape(points=p, name="alt_flange_" + str(number))
+	# Add holes to the sketch
 	hole_x = 25
 	hole_y = 0
 	makeHole(sketch, x=hole_x, y=hole_y, radius=5.01)
 	makeHole(sketch, x=hole_x + 20 - (SLOT_WIDTH/2), y=hole_y, radius=TAPPING_SIZE_6 / 2)
-
-	x = -width + 15
-	z = height + 7
-	if number == 1:
-		moveSketch(sketch, x=x, y=20, z=z)
-	else:
-		y = -20 + (DISK_THICKNESS)
-		moveSketch(sketch, x=x, y=y, z=z)
-
 	# Create the pad
 	pad = doc.addObject("PartDesign::Pad", "alt_flange_pad_" + str(number))
 	pad.Profile = sketch
@@ -423,8 +627,16 @@ def create_alt_flange(number):
 	sketch.Visibility = False
 	pad.Visibility = True
 	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
-
 	doc.recompute()
+	x = -width + 15
+	z = height + 7
+	if number == 1:
+		moveObject(pad, x=x, y=20, z=z)
+	else:
+		y = -20 + (DISK_THICKNESS)
+		moveObject(pad, x=x, y=y, z=z)
+	doc.recompute()
+	return pad
 
 def deleteExistingDocument(name):
 	"""
@@ -444,8 +656,28 @@ try:
 	deleteExistingDocument(DOCUMENT_NAME)
 	doc = App.newDocument(DOCUMENT_NAME)
 	FreeCADGui.ActiveDocument.ActiveView.setAnimationEnabled(False)
+
+	# create the central alt axis pin
+	alt_axis = draw_bolt(sections=[{"d": 10, "l": 2}, {"d": 9.6, "l": 1.1}, {"d": 10, "l": 54}, {"d": 9.6, "l": 1.1}, {"d": 10, "l": 2}], name="alt_axis")
+	moveObject(alt_axis, x=-10, y=-30, z=57)
+
+	# create the central az axis shoulder bolt
+	az_bolt = draw_bolt(sections=[{"d": TAPPING_SIZE_8, "l": 6},{"d": 10, "l": 6},{"d": 16, "l": 3}], name="az_axle")
+	rotateObject(az_bolt, plane="xz", angle=90)
+
+	# make the az disk clamp bolts
+	az_clamp_bolt_1 = draw_bolt(sections=[{"d": TAPPING_SIZE_6, "l": 6},{"d": 6, "l": 6},{"d": 10, "l": 5}], name="az_clamp_bolt_1")
+	rotateObject(az_clamp_bolt_1, plane="xz", angle=90)
+	moveObject(az_clamp_bolt_1, y=42)
+	az_clamp_bolt_2 = draw_bolt(sections=[{"d": TAPPING_SIZE_6, "l": 6},{"d": 6, "l": 6},{"d": 10, "l": 5}], name="az_clamp_bolt_2")
+	rotateObject(az_clamp_bolt_2, plane="xz", angle=90)
+	moveObject(az_clamp_bolt_2, y=-42)
+	# now create the azimuth disks
 	create_top_az_disk()
 	create_bottom_az_disk()
+	# create bolts to secure the az angle
+	#az_fastner1 = create_shoulder_bolt(top_diameter=16, top_length=5, middle_diameter=6, middle_length=12)
+	# az_fastner2 = create_shoulder_bolt(x=0, y=0, top_diameter=16, top_length=5, middle_diameter=6, middle_length=6, bottom_diameter=6, bottom_length=6)
 	create_az_flange(1)
 	create_az_flange(2)
 	create_alt_flange(1)
