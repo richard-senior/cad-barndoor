@@ -23,27 +23,54 @@ doc = None
 # screw_maker = FastenersCmd.screwMaker
 
 def cutSlot(sketch, slot_width=6, cx=0, cy=0, slot_radius=40, start_angle=0, end_angle=180):
-	# angles in degrees, so convert to rads
+	# Convert angles to radians
 	sa = math.radians(start_angle)
 	ea = math.radians(end_angle)
-	# Calculate arc points
-	arc_center = Base.Vector(cx, cy, 0)
-	# create the arc slot
-	# Part.ArcOfCircle(Part.Circle(center,axis,radius),startangle,endangle)
-	geoList = []
-	geoList.append(Part.ArcOfCircle(Part.Circle(arc_center, Base.Vector(0, 0, 1), slot_radius), sa, ea))
-	geoList.append(Part.ArcOfCircle(Part.Circle(arc_center, Base.Vector(0, 0, 1), slot_radius - slot_width), sa, ea))
-	# TODO rounded slot ends
-	geoList.append(Part.LineSegment(
-		Base.Vector(cx + slot_radius * math.cos(sa), cy + slot_radius * math.sin(sa), 0),
-		Base.Vector(cx + (slot_radius - slot_width) * math.cos(sa), cy + (slot_radius - slot_width) * math.sin(sa), 0)))
 
-	# End point connection
-	geoList.append(Part.LineSegment(
-		Base.Vector(cx + slot_radius * math.cos(ea), cy + slot_radius * math.sin(ea), 0),
-		Base.Vector(cx + (slot_radius - slot_width) * math.cos(ea), cy + (slot_radius - slot_width) * math.sin(ea), 0)))
+	# Calculate the outer and inner radii
+	outer_radius = slot_radius
+	inner_radius = slot_radius - slot_width
 
-	sketch.addGeometry(geoList, False)
+	# Calculate the points for the outer arc
+	outer_start_x = cx + outer_radius * math.cos(sa)
+	outer_start_y = cy + outer_radius * math.sin(sa)
+	outer_end_x = cx + outer_radius * math.cos(ea)
+	outer_end_y = cy + outer_radius * math.sin(ea)
+
+	# Calculate the points for the inner arc
+	inner_start_x = cx + inner_radius * math.cos(sa)
+	inner_start_y = cy + inner_radius * math.sin(sa)
+	inner_end_x = cx + inner_radius * math.cos(ea)
+	inner_end_y = cy + inner_radius * math.sin(ea)
+
+	# Calculate the centers for the end cap arcs
+	end_cap_center_x = (outer_end_x + inner_end_x) / 2
+	end_cap_center_y = (outer_end_y + inner_end_y) / 2
+
+	start_cap_center_x = (outer_start_x + inner_start_x) / 2
+	start_cap_center_y = (outer_start_y + inner_start_y) / 2
+
+	# Define the slot profile points using the dictionary format with arc connectors
+	slot_profile = [
+		# Start at the outer arc start point
+		{"x": outer_start_x, "y": outer_start_y},
+
+		# Outer arc from start to end (using connector=a and center point)
+		{"x": outer_end_x, "y": outer_end_y, "connector": "a", "cx": cx, "cy": cy},
+
+		# End cap arc (semi-circle connecting outer to inner)
+		{"x": inner_end_x, "y": inner_end_y, "connector": "a", "cx": end_cap_center_x, "cy": end_cap_center_y},
+
+		# Inner arc from end to start (going in OPPOSITE direction)
+		# For this to work with drawShape, we need to specify the center point
+		# and rely on the arc calculation to go the shorter way around
+		{"x": inner_start_x, "y": inner_start_y, "connector": "a", "cx": cx, "cy": cy},
+
+		# Start cap arc (semi-circle connecting inner to outer)
+		{"x": outer_start_x, "y": outer_start_y, "connector": "a", "cx": start_cap_center_x, "cy": start_cap_center_y}
+	]
+	drawShape(sketch, points=slot_profile, name="slot")
+
 
 # makes a whole of a given radius in the given sketch
 # at the given centre x and y
@@ -247,13 +274,14 @@ def addArcSegment(sketch, start_point, end_point, radius=None, center=None):
 	# Add to sketch
 	return sketch.addGeometry(arc)
 
-def drawShape(points, name="shape"):
+def drawShape(sketch=None, points=[], name="shape"):
 	# Validate input
 	if not points or len(points) < 2:
 		print("Error: At least 2 points are required to create a sketch")
 		return None
 
-	sketch = doc.addObject("Sketcher::SketchObject", name)
+	if not sketch:
+		sketch = doc.addObject("Sketcher::SketchObject", name)
 
 	# Add segments connecting each point
 	geometries = []
@@ -324,53 +352,9 @@ def drawShape(points, name="shape"):
 	# Add coincident constraints between segments
 	for i in range(len(geometries) - 1):
 		sketch.addConstraint(Sketcher.Constraint("Coincident", geometries[i], 2, geometries[i+1], 1))
-
 	# Close the loop with a constraint if we have more than one segment
 	if len(geometries) > 1:
 		sketch.addConstraint(Sketcher.Constraint("Coincident", geometries[-1], 2, geometries[0], 1))
-
-	# Add geometric constraints for line segments (but avoid redundant constraints)
-	added_horizontal = set()
-	added_vertical = set()
-
-	for i, geo_idx in enumerate(geometries):
-		geo = sketch.Geometry[geo_idx]
-
-		# Only apply horizontal/vertical constraints to line segments
-		if isinstance(geo, Part.LineSegment):
-			start = geo.StartPoint
-			end = geo.EndPoint
-
-			# Check if line is horizontal or vertical (with small tolerance)
-			dx = abs(end.x - start.x)
-			dy = abs(end.y - start.y)
-
-			if dx < 0.001 and dy > 0.001 and geo_idx not in added_vertical:  # Vertical line
-				sketch.addConstraint(Sketcher.Constraint("Vertical", geo_idx))
-				added_vertical.add(geo_idx)
-			elif dy < 0.001 and dx > 0.001 and geo_idx not in added_horizontal:  # Horizontal line
-				sketch.addConstraint(Sketcher.Constraint("Horizontal", geo_idx))
-				added_horizontal.add(geo_idx)
-
-	# Add dimensional constraints for line segments (but be more selective)
-	# Only add dimensions for key features, not for every line
-	key_dimensions = []
-	if len(geometries) > 0:
-		key_dimensions.append(geometries[0])  # First segment
-	if len(geometries) > 2:
-		key_dimensions.append(geometries[len(geometries)//2])  # Middle segment
-
-	for geo_idx in key_dimensions:
-		geo = sketch.Geometry[geo_idx]
-
-		if isinstance(geo, Part.LineSegment):
-			start = geo.StartPoint
-			end = geo.EndPoint
-			length = ((end.x - start.x)**2 + (end.y - start.y)**2)**0.5
-
-			# Only add dimensional constraints for non-zero length lines
-			if length > 0.001:
-				sketch.addConstraint(Sketcher.Constraint("Distance", geo_idx, length))
 
 	doc.recompute()
 	return sketch
@@ -397,7 +381,7 @@ def draw_bolt(sections, name="cylinder_profile", start_y=0):
 	profile_points.append({"x": 0, "y": current_y})
 
 	# Draw the profile using drawShape
-	sketch = drawShape(profile_points, name)
+	sketch = drawShape(points=profile_points, name=name)
 
 	doc.recompute()
 	revolution = doc.addObject("Part::Revolution", name)
@@ -538,56 +522,49 @@ def create_bottom_az_disk():
 	doc.recompute()
 
 def create_az_flange(number):
-	# Create a new sketch
-	sketch = doc.addObject('Sketcher::SketchObject', "az_flange_" + str(number))
+	"""
+	Creates an azimuth flange using drawShape for the profile.
 
+	Args:
+		number: Flange number (1 or 2)
+	"""
 	# Define dimensions
 	width = 70   # width of rectangle - matches chord length
 	height = 70  # height of rectangle
-	cut = 20      # size of corner cut
+	cut = 20     # size of corner cut
 
+	# Define the flange profile points using the dictionary format
+	flange_profile = [
+		{"x": 0, "y": 0},                # bottom left
+		{"x": width, "y": 0},            # bottom right
+		{"x": width, "y": height-cut},   # top right before cut
+		{"x": width-cut, "y": height},   # top right after cut
+		{"x": 0, "y": height}            # top left
+	]
+
+	# Draw the flange profile using drawShape
+	sketch = drawShape(points=flange_profile, name="az_flange_" + str(number))
+
+	# Rotate the sketch to the XZ plane
 	rotateSketch(sketch, plane='xz', angle=90)
+
+	# Position the sketch based on the flange number
 	if (number == 1):
 		moveSketch(sketch, x=-width/2, y=-26, z=DISK_THICKNESS * 2)
 	else:
 		moveSketch(sketch, x=-width/2, y=26, z=DISK_THICKNESS * 2)
 
-	# Define vertices for rectangle with cut corner
-	v1 = App.Vector(0, 0, 0)          # bottom left
-	v2 = App.Vector(width, 0, 0)       # bottom right
-	v3 = App.Vector(width, height-cut, 0)  # top right before cut
-	v4 = App.Vector(width-cut, height, 0)  # top right after cut
-	v5 = App.Vector(0, height, 0)      # top left
-
-	# Add line segments using Part.LineSegment
-	sketch.addGeometry(Part.LineSegment(v1, v2))  # bottom
-	sketch.addGeometry(Part.LineSegment(v2, v3))  # right side
-	sketch.addGeometry(Part.LineSegment(v3, v4))  # diagonal cut
-	sketch.addGeometry(Part.LineSegment(v4, v5))  # top
-	sketch.addGeometry(Part.LineSegment(v5, v1))  # left side
-
-	# Add constraints
-	# Connect all lines
-	sketch.addConstraint(Sketcher.Constraint("Coincident", 0, 2, 1, 1))  # v2
-	sketch.addConstraint(Sketcher.Constraint("Coincident", 1, 2, 2, 1))  # v3
-	sketch.addConstraint(Sketcher.Constraint("Coincident", 2, 2, 3, 1))  # v4
-	sketch.addConstraint(Sketcher.Constraint("Coincident", 3, 2, 4, 1))  # v5
-	sketch.addConstraint(Sketcher.Constraint("Coincident", 4, 2, 0, 1))  # back to v1
-
-	# Add dimensions
-	sketch.addConstraint(Sketcher.Constraint("Distance", 0, width))  # bottom width
-	sketch.addConstraint(Sketcher.Constraint("Distance", 4, height))  # left height
-
-	# pivot holes
+	# Add pivot holes
 	# Add a 10mm diameter hole near the 45-degree cut corner
 	hole_radius = 5.01  # 10mm diameter = 5mm radius
 	# Position the hole center 15mm from both edges (to leave enough material)
 	hole_x = 25  # Move in from the cut corner
 	hole_y = height - 25  # Move down from the top
-	slot_radius=20
+	slot_radius = 20
 	makeHole(sketch, hole_x, hole_y, hole_radius)
 	cutSlot(sketch, slot_width=SLOT_WIDTH, slot_radius=slot_radius, cx=hole_x, cy=hole_y, start_angle=250, end_angle=15)
 
+	# Create the pad
 	pad = doc.addObject("PartDesign::Pad", "az_flange_pad_" + str(number))
 	pad.Profile = sketch
 	pad.Length = DISK_THICKNESS
@@ -597,22 +574,23 @@ def create_az_flange(number):
 	pad.Visibility = True
 	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
 	pad.ViewObject.Transparency = 70
+
 	doc.recompute()
+
+	return pad
 
 def create_alt_flange(number):
 	# Define dimensions
 	height = 50      # rectangle height
 	width = 50       # rectangle width
-
 	# Define the flange profile points using the dictionary format
+	# Note: Don't repeat the first point at the end - drawShape will close the shape
 	p = [
-		{"x": 0, "y": height/2},           # top left
-		{"x": 0, "y": -height/2},          # bottom left
-		{"x": width, "y": -height/2},      # bottom right
-		{"x": width, "y": height/2},       # top right
-		{"x": 0, "y": height/2}            # back to top left to close the shape
+		{"x": 0, "y": height/2},
+		{"x": 0, "y": -height/2},
+		{"x": width, "y": -height/2},
+		{"x": width, "y": height/2},
 	]
-
 	# Draw the flange profile using drawShape
 	sketch = drawShape(points=p, name="alt_flange_" + str(number))
 	# Add holes to the sketch
@@ -620,6 +598,19 @@ def create_alt_flange(number):
 	hole_y = 0
 	makeHole(sketch, x=hole_x, y=hole_y, radius=5.01)
 	makeHole(sketch, x=hole_x + 20 - (SLOT_WIDTH/2), y=hole_y, radius=TAPPING_SIZE_6 / 2)
+
+	rotateSketch(sketch, plane='xz', angle=90)
+
+	# Position the flange
+	x = -width + 15
+	#z = height + 7
+	z=57
+	if number == 1:
+		moveSketch(sketch, x=x, y=20, z=z)
+	else:
+		moveSketch(sketch, x=x, y=-20, z=z)
+
+
 	# Create the pad
 	pad = doc.addObject("PartDesign::Pad", "alt_flange_pad_" + str(number))
 	pad.Profile = sketch
@@ -627,14 +618,6 @@ def create_alt_flange(number):
 	sketch.Visibility = False
 	pad.Visibility = True
 	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
-	doc.recompute()
-	x = -width + 15
-	z = height + 7
-	if number == 1:
-		moveObject(pad, x=x, y=20, z=z)
-	else:
-		y = -20 + (DISK_THICKNESS)
-		moveObject(pad, x=x, y=y, z=z)
 	doc.recompute()
 	return pad
 
@@ -675,9 +658,6 @@ try:
 	# now create the azimuth disks
 	create_top_az_disk()
 	create_bottom_az_disk()
-	# create bolts to secure the az angle
-	#az_fastner1 = create_shoulder_bolt(top_diameter=16, top_length=5, middle_diameter=6, middle_length=12)
-	# az_fastner2 = create_shoulder_bolt(x=0, y=0, top_diameter=16, top_length=5, middle_diameter=6, middle_length=6, bottom_diameter=6, bottom_length=6)
 	create_az_flange(1)
 	create_az_flange(2)
 	create_alt_flange(1)
