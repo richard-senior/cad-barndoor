@@ -59,7 +59,8 @@ def cutSlot(sketch, slot_width=6, cx=0, cy=0, slot_radius=40, start_angle=0, end
 		{"x": outer_end_x, "y": outer_end_y, "connector": "a", "cx": cx, "cy": cy},
 
 		# End cap arc (semi-circle connecting outer to inner)
-		{"x": inner_end_x, "y": inner_end_y, "connector": "a", "cx": end_cap_center_x, "cy": end_cap_center_y},
+		# {"x": inner_end_x, "y": inner_end_y, "connector": "a", "cx": end_cap_center_x, "cy": end_cap_center_y},
+		{"x": inner_end_x, "y": inner_end_y},
 
 		# Inner arc from end to start (going in OPPOSITE direction)
 		# For this to work with drawShape, we need to specify the center point
@@ -67,8 +68,10 @@ def cutSlot(sketch, slot_width=6, cx=0, cy=0, slot_radius=40, start_angle=0, end
 		{"x": inner_start_x, "y": inner_start_y, "connector": "a", "cx": cx, "cy": cy},
 
 		# Start cap arc (semi-circle connecting inner to outer)
-		{"x": outer_start_x, "y": outer_start_y, "connector": "a", "cx": start_cap_center_x, "cy": start_cap_center_y}
+		# {"x": outer_start_x, "y": outer_start_y, "connector": "a", "cx": start_cap_center_x, "cy": start_cap_center_y}
+		{"x": outer_start_x, "y": outer_start_y}
 	]
+
 	drawShape(sketch, points=slot_profile, name="slot")
 
 
@@ -186,7 +189,7 @@ def moveSketch(sketch, x=0, y=0, z=0):
 	)
 	sketch.Placement = new_placement
 
-def addArcSegment(sketch, start_point, end_point, radius=None, center=None):
+def addArcSegment(sketch, start=None, end=None, centre=None, direction=True):
 	"""
 	Adds an arc segment to a sketch between two points.
 
@@ -194,87 +197,73 @@ def addArcSegment(sketch, start_point, end_point, radius=None, center=None):
 		sketch: The sketch object to add the arc to
 		start_point: Starting point (x,y) tuple or Base.Vector
 		end_point: Ending point (x,y) tuple or Base.Vector
-		radius: Optional radius of the arc
-		center: Optional center point of the arc
+		centre: Ending point (x,y) tuple or Base.Vector
+		direction: Boolean indicating direction of the arc. True = counterclockwise (default), False = clockwise
 
 	Returns:
 		Index of the created geometry
 	"""
+	print("in addArcSegment")
 	# Convert tuples to vectors if needed
-	if isinstance(start_point, tuple):
-		start_point = Base.Vector(start_point[0], start_point[1], 0)
-	if isinstance(end_point, tuple):
-		end_point = Base.Vector(end_point[0], end_point[1], 0)
+	if isinstance(start, tuple):
+		start_point = Base.Vector(start[0], start[1], 0)
+	if isinstance(end, tuple):
+		end_point = Base.Vector(end[0], end[1], 0)
 
-	# If center is not provided, we need to calculate it
-	if center is None:
-		if radius is None:
-			# Without radius or center, create a default arc (semi-circle)
-			mid_point = Base.Vector(
-				(start_point.x + end_point.x) / 2,
-				(start_point.y + end_point.y) / 2,
-				0
-			)
+	radius=None
 
-			# Calculate perpendicular direction for center
-			direction = Base.Vector(end_point.x - start_point.x, end_point.y - start_point.y, 0)
-			perpendicular = Base.Vector(-direction.y, direction.x, 0)
-			perpendicular.normalize()
+	if centre is not None:
+		# Calculate radius from center to start point
+		dx = start_point.x - centre.x
+		dy = start_point.y - centre.y
+		radius = (dx**2 + dy**2)**0.5
+	else:
+		# Without center coordinates, create a default arc (semi-circle)
+		mid_point = Base.Vector(
+			(start_point.x + end_point.x) / 2,
+			(start_point.y + end_point.y) / 2,
+			0
+		)
 
-			# Distance between points
-			chord_length = ((end_point.x - start_point.x)**2 + (end_point.y - start_point.y)**2)**0.5
+		# Calculate perpendicular direction for center
+		dir_vector = Base.Vector(end_point.x - start_point.x, end_point.y - start_point.y, 0)
+		perpendicular = Base.Vector(-dir_vector.y, dir_vector.x, 0)
+		perpendicular.normalize()
 
-			# For a semi-circle, the center is at distance r from midpoint
-			# where r = chord_length/2
-			center = mid_point.add(perpendicular.multiply(chord_length/2))
-			radius = chord_length/2
-		else:
-			# With radius but no center, we need to find the center
-			# This is a bit more complex - we need to find a point that is
-			# radius distance from both start and end points
+		# Distance between points
+		chord_length = ((end_point.x - start_point.x)**2 + (end_point.y - start_point.y)**2)**0.5
 
-			# First find midpoint of the chord
-			mid_point = Base.Vector(
-				(start_point.x + end_point.x) / 2,
-				(start_point.y + end_point.y) / 2,
-				0
-			)
-
-			# Calculate perpendicular direction
-			direction = Base.Vector(end_point.x - start_point.x, end_point.y - start_point.y, 0)
-			perpendicular = Base.Vector(-direction.y, direction.x, 0)
-			perpendicular.normalize()
-
-			# Distance between points
-			chord_length = ((end_point.x - start_point.x)**2 + (end_point.y - start_point.y)**2)**0.5
-
-			# Calculate how far from midpoint the center is
-			# Using Pythagoras: radius² = (chord_length/2)² + h²
-			# where h is the height we need to calculate
-			if radius < chord_length/2:
-				# Radius too small to create an arc between these points
-				print("Error: Radius too small to create arc between points")
-				return None
-
-			h = (radius**2 - (chord_length/2)**2)**0.5
-
-			# Center is h units from midpoint in perpendicular direction
-			center = mid_point.add(perpendicular.multiply(h))
+		# For a semi-circle, the center is at distance r from midpoint
+		# where r = chord_length/2
+		centre = mid_point.add(perpendicular.multiply(chord_length/2))
+		radius = chord_length/2
 
 	# Create the circle that our arc will be part of
-	circle = Part.Circle(center, Base.Vector(0, 0, 1), radius)
+	circle = Part.Circle(centre, Base.Vector(0, 0, 1), radius)
 
 	# Calculate the angles for start and end points
 	start_angle = circle.parameter(start_point)
 	end_angle = circle.parameter(end_point)
 
+	# Adjust angles based on direction
+	if direction:  # Counterclockwise
+		if end_angle < start_angle:
+			end_angle += 2 * math.pi  # Ensure end_angle > start_angle for CCW
+	else:  # Clockwise
+		if end_angle > start_angle:
+			end_angle -= 2 * math.pi  # Ensure end_angle < start_angle for CW
+		else:
+			start_angle += 2 * math.pi  # Maintain proper ordering
+
 	# Create the arc
 	arc = Part.ArcOfCircle(circle, start_angle, end_angle)
 
 	# Add to sketch
+	print("exiting addArcSegment")
 	return sketch.addGeometry(arc)
 
 def drawShape(sketch=None, points=[], name="shape"):
+	print("in drawshape")
 	# Validate input
 	if not points or len(points) < 2:
 		print("Error: At least 2 points are required to create a sketch")
@@ -288,9 +277,9 @@ def drawShape(sketch=None, points=[], name="shape"):
 	for i in range(len(points) - 1):
 		start_point = (points[i].get("x", 0), points[i].get("y", 0))
 		end_point = (points[i+1].get("x", 0), points[i+1].get("y", 0))
-
+		con = points[i+1].get("connector")
 		# Check if this segment should be an arc
-		if points[i+1].get("connector") == "a":
+		if con and con in "ac":
 			# Get center if provided, otherwise pass None
 			center = None
 			if "cx" in points[i+1] and "cy" in points[i+1]:
@@ -302,10 +291,9 @@ def drawShape(sketch=None, points=[], name="shape"):
 				# Calculate radius from center to start point
 				dx = start_point[0] - center.x
 				dy = start_point[1] - center.y
-				radius = (dx**2 + dy**2)**0.5
 
 			# Add arc segment
-			geo_idx = addArcSegment(sketch, start_point, end_point, radius, center)
+			geo_idx = addArcSegment(sketch, start=start_point, end=end_point, centre=center, direction=con=="a")
 		else:
 			# Add line segment
 			geo_idx = sketch.addGeometry(Part.LineSegment(
@@ -315,41 +303,6 @@ def drawShape(sketch=None, points=[], name="shape"):
 
 		geometries.append(geo_idx)
 
-	# Check if the shape is already closed
-	first_x = points[0].get("x", 0)
-	first_y = points[0].get("y", 0)
-	last_x = points[-1].get("x", 0)
-	last_y = points[-1].get("y", 0)
-
-	# If not closed, add a final segment to close the shape
-	if first_x != last_x or first_y != last_y:
-		# Check if the closing segment should be an arc
-		if points[0].get("connector") == "a":
-			# Get center if provided, otherwise pass None
-			center = None
-			if "cx" in points[0] and "cy" in points[0]:
-				center = Base.Vector(points[0]["cx"], points[0]["cy"], 0)
-
-			# Calculate radius if center is provided
-			radius = None
-			if center:
-				# Calculate radius from center to end point
-				dx = last_x - center.x
-				dy = last_y - center.y
-				radius = (dx**2 + dy**2)**0.5
-
-			# Add arc segment
-			geo_idx = addArcSegment(sketch, (last_x, last_y), (first_x, first_y), radius, center)
-		else:
-			# Add line segment
-			geo_idx = sketch.addGeometry(Part.LineSegment(
-				Base.Vector(last_x, last_y, 0),
-				Base.Vector(first_x, first_y, 0)
-			))
-
-		geometries.append(geo_idx)
-
-	# Add coincident constraints between segments
 	for i in range(len(geometries) - 1):
 		sketch.addConstraint(Sketcher.Constraint("Coincident", geometries[i], 2, geometries[i+1], 1))
 	# Close the loop with a constraint if we have more than one segment
@@ -362,7 +315,10 @@ def drawShape(sketch=None, points=[], name="shape"):
 def draw_bolt(sections, name="cylinder_profile", start_y=0):
 	profile_points = []
 	current_y = start_y
-	profile_points.append({"x": 0, "y": current_y})
+
+	# Start at the bottom center point
+	profile_points.append({"x": 0, "y": current_y})  # bottom center
+
 	# Process each section to create the profile
 	for i, section in enumerate(sections):
 		# Get diameter and length from the section
@@ -370,15 +326,21 @@ def draw_bolt(sections, name="cylinder_profile", start_y=0):
 		length = section.get('l', 10)    # Default to 10 if not specified
 		# Calculate radius
 		radius = diameter / 2
+
 		# Add the bottom-right corner of this section
-		profile_points.append({"x": radius, "y": current_y})
+		profile_points.append({"x": radius, "y": current_y})  # bottom right of section
+
 		# Update the current Y position
 		current_y += length
-		# Add the top-right corner of this section
-		profile_points.append({"x": radius, "y": current_y})
 
-	# Add the final point back to the axis
-	profile_points.append({"x": 0, "y": current_y})
+		# Add the top-right corner of this section
+		profile_points.append({"x": radius, "y": current_y})  # top right of section
+
+	# Add the final point at the top center
+	profile_points.append({"x": 0, "y": current_y})  # top center
+
+	# Add closing point back to the start to complete the profile
+	profile_points.append({"x": 0, "y": start_y})  # back to bottom center (closing line)
 
 	# Draw the profile using drawShape
 	sketch = drawShape(points=profile_points, name=name)
@@ -534,12 +496,14 @@ def create_az_flange(number):
 	cut = 20     # size of corner cut
 
 	# Define the flange profile points using the dictionary format
+	# Explicitly specify all connections including the closing connection
 	flange_profile = [
 		{"x": 0, "y": 0},                # bottom left
-		{"x": width, "y": 0},            # bottom right
-		{"x": width, "y": height-cut},   # top right before cut
-		{"x": width-cut, "y": height},   # top right after cut
-		{"x": 0, "y": height}            # top left
+		{"x": width, "y": 0},            # bottom right (line from bottom left)
+		{"x": width, "y": height-cut},   # top right before cut (line from bottom right)
+		{"x": width-cut, "y": height},   # top right after cut (line from top right before cut)
+		{"x": 0, "y": height},           # top left (line from top right after cut)
+		{"x": 0, "y": 0}                 # back to bottom left (closing line)
 	]
 
 	# Draw the flange profile using drawShape
@@ -584,12 +548,13 @@ def create_alt_flange(number):
 	height = 50      # rectangle height
 	width = 50       # rectangle width
 	# Define the flange profile points using the dictionary format
-	# Note: Don't repeat the first point at the end - drawShape will close the shape
+	# Explicitly specify all connections including the closing connection
 	p = [
-		{"x": 0, "y": height/2},
-		{"x": 0, "y": -height/2},
-		{"x": width, "y": -height/2},
-		{"x": width, "y": height/2},
+		{"x": 0, "y": height/2},         # top left
+		{"x": 0, "y": -height/2},        # bottom left (line from top left)
+		{"x": width, "y": -height/2},    # bottom right (line from bottom left)
+		{"x": width, "y": height/2},     # top right (line from bottom right)
+		{"x": 0, "y": height/2}          # back to top left (closing line)
 	]
 	# Draw the flange profile using drawShape
 	sketch = drawShape(points=p, name="alt_flange_" + str(number))
@@ -608,7 +573,7 @@ def create_alt_flange(number):
 	if number == 1:
 		moveSketch(sketch, x=x, y=20, z=z)
 	else:
-		moveSketch(sketch, x=x, y=-20, z=z)
+		moveSketch(sketch, x=x, y=-14, z=z)
 
 
 	# Create the pad
