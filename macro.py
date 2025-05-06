@@ -1,4 +1,5 @@
 import FreeCAD as App
+import os
 import Part
 import math
 import Draft
@@ -8,6 +9,7 @@ import FastenerBase
 import FastenersCmd
 import Sketcher  # Added this import
 import os
+import importSVG
 
 DOCUMENT_NAME="BarnDoor"
 # Dimensions in mm
@@ -20,9 +22,48 @@ SLOT_WIDTH=6
 
 # global variable to hold the document
 doc = None
-# screw_maker = FastenersCmd.screwMaker
 
-def cutSlot(sketch, slot_width=6, cx=0, cy=0, slot_radius=40, start_angle=0, end_angle=180):
+# screw_maker = FastenersCmd.screwMaker
+def exportSketch(sketch):
+	__objs__ = [sketch]
+	# Save the current placement
+	original_placement = sketch.Placement
+
+	# Temporarily reset to default orientation (XY plane)
+	default_placement = App.Placement(
+		Base.Vector(0, 0, 0),
+		Base.Rotation(0, 0, 0, 1)  # Identity rotation
+	)
+
+	try:
+		# Apply the default placement for export
+		sketch.Placement = default_placement
+		doc.recompute()  # Ensure the change takes effect
+
+		# Use the user's home directory to ensure write permissions
+		home_dir = os.path.expanduser("~")
+		path = os.path.join(home_dir, "barndoor", "cad-barndoor", f"{sketch.Name}.svg")
+		print("Exporting sketch to: " + path)
+
+		importSVG.export(__objs__, path)
+		print(f"Successfully exported to {path}")
+	except Exception as e:
+		print(f"Export error: {str(e)}")
+		# Try alternative location directly in home directory
+		alt_path = os.path.join(home_dir, f"{sketch.Name}.svg")
+		print(f"Trying alternative path: {alt_path}")
+		try:
+			importSVG.export(__objs__, alt_path)
+			print(f"Successfully exported to {alt_path}")
+		except Exception as e2:
+			print(f"Alternative export also failed: {str(e2)}")
+	finally:
+		# Restore the original placement
+		sketch.Placement = original_placement
+		doc.recompute()  # Ensure the restoration takes effect
+
+
+def cutSlot(sketch, slot_width=6, cx=0, cy=0, slot_radius=40, start_angle=0, end_angle=180, direction=True):
 	# Convert angles to radians
 	sa = math.radians(start_angle)
 	ea = math.radians(end_angle)
@@ -50,29 +91,40 @@ def cutSlot(sketch, slot_width=6, cx=0, cy=0, slot_radius=40, start_angle=0, end
 	start_cap_center_x = (outer_start_x + inner_start_x) / 2
 	start_cap_center_y = (outer_start_y + inner_start_y) / 2
 
-	# Define the slot profile points using the dictionary format with arc connectors
-	slot_profile = [
-		# Start at the outer arc start point
-		{"x": outer_start_x, "y": outer_start_y},
+	# Define the slot profile as lines with arc connectors
+	# The connector type depends on the direction parameter
+	# 'a' for counterclockwise, 'c' for clockwise
+	oc = "c" if direction else "a"
+	ic = "a" if direction else "c"
 
-		# Outer arc from start to end (using connector=a and center point)
-		{"x": outer_end_x, "y": outer_end_y, "connector": "a", "cx": cx, "cy": cy},
-
-		# End cap arc (semi-circle connecting outer to inner)
-		# {"x": inner_end_x, "y": inner_end_y, "connector": "a", "cx": end_cap_center_x, "cy": end_cap_center_y},
-		{"x": inner_end_x, "y": inner_end_y},
-
-		# Inner arc from end to start (going in OPPOSITE direction)
-		# For this to work with drawShape, we need to specify the center point
-		# and rely on the arc calculation to go the shorter way around
-		{"x": inner_start_x, "y": inner_start_y, "connector": "a", "cx": cx, "cy": cy},
-
-		# Start cap arc (semi-circle connecting inner to outer)
-		# {"x": outer_start_x, "y": outer_start_y, "connector": "a", "cx": start_cap_center_x, "cy": start_cap_center_y}
-		{"x": outer_start_x, "y": outer_start_y}
+	slot_lines = [
+		# Outer arc
+		{
+			"sx": outer_start_x, "sy": outer_start_y,
+			"ex": outer_end_x, "ey": outer_end_y,
+			"cx": cx, "cy": cy,
+			"connector": oc,
+		},
+		{
+			"sx": outer_end_x, "sy": outer_end_y,
+			"ex": inner_end_x, "ey": inner_end_y,
+			"cx": end_cap_center_x, "cy": end_cap_center_y,
+			"connector": "a"
+		},
+		{
+			"sx": inner_start_x, "sy": inner_start_y,
+			"ex": inner_end_x, "ey": inner_end_y,
+			"cx": cx, "cy": cy,
+			"connector": ic,
+		},
+		{
+			"sx": inner_start_x, "sy": inner_start_y,
+			"ex": outer_start_x, "ey": outer_start_y,
+			"cx": start_cap_center_x, "cy": start_cap_center_y,
+			"connector": "a"
+		}
 	]
-
-	drawShape(sketch, points=slot_profile, name="slot")
+	drawShape(sketch, lines=slot_lines, name="slot")
 
 
 # makes a whole of a given radius in the given sketch
@@ -189,83 +241,11 @@ def moveSketch(sketch, x=0, y=0, z=0):
 	)
 	sketch.Placement = new_placement
 
-def addArcSegment(sketch, start=None, end=None, centre=None, direction=True):
-	"""
-	Adds an arc segment to a sketch between two points.
 
-	Args:
-		sketch: The sketch object to add the arc to
-		start_point: Starting point (x,y) tuple or Base.Vector
-		end_point: Ending point (x,y) tuple or Base.Vector
-		centre: Ending point (x,y) tuple or Base.Vector
-		direction: Boolean indicating direction of the arc. True = counterclockwise (default), False = clockwise
-
-	Returns:
-		Index of the created geometry
-	"""
-	print("in addArcSegment")
-	# Convert tuples to vectors if needed
-	if isinstance(start, tuple):
-		start_point = Base.Vector(start[0], start[1], 0)
-	if isinstance(end, tuple):
-		end_point = Base.Vector(end[0], end[1], 0)
-
-	radius=None
-
-	if centre is not None:
-		# Calculate radius from center to start point
-		dx = start_point.x - centre.x
-		dy = start_point.y - centre.y
-		radius = (dx**2 + dy**2)**0.5
-	else:
-		# Without center coordinates, create a default arc (semi-circle)
-		mid_point = Base.Vector(
-			(start_point.x + end_point.x) / 2,
-			(start_point.y + end_point.y) / 2,
-			0
-		)
-
-		# Calculate perpendicular direction for center
-		dir_vector = Base.Vector(end_point.x - start_point.x, end_point.y - start_point.y, 0)
-		perpendicular = Base.Vector(-dir_vector.y, dir_vector.x, 0)
-		perpendicular.normalize()
-
-		# Distance between points
-		chord_length = ((end_point.x - start_point.x)**2 + (end_point.y - start_point.y)**2)**0.5
-
-		# For a semi-circle, the center is at distance r from midpoint
-		# where r = chord_length/2
-		centre = mid_point.add(perpendicular.multiply(chord_length/2))
-		radius = chord_length/2
-
-	# Create the circle that our arc will be part of
-	circle = Part.Circle(centre, Base.Vector(0, 0, 1), radius)
-
-	# Calculate the angles for start and end points
-	start_angle = circle.parameter(start_point)
-	end_angle = circle.parameter(end_point)
-
-	# Adjust angles based on direction
-	if direction:  # Counterclockwise
-		if end_angle < start_angle:
-			end_angle += 2 * math.pi  # Ensure end_angle > start_angle for CCW
-	else:  # Clockwise
-		if end_angle > start_angle:
-			end_angle -= 2 * math.pi  # Ensure end_angle < start_angle for CW
-		else:
-			start_angle += 2 * math.pi  # Maintain proper ordering
-
-	# Create the arc
-	arc = Part.ArcOfCircle(circle, start_angle, end_angle)
-
-	# Add to sketch
-	print("exiting addArcSegment")
-	return sketch.addGeometry(arc)
-
-def drawShape(sketch=None, points=[], name="shape"):
+def drawShape(sketch=None, lines=[], name="shape"):
 	print("in drawshape")
 	# Validate input
-	if not points or len(points) < 2:
+	if not lines or len(lines) < 2:
 		print("Error: At least 2 points are required to create a sketch")
 		return None
 
@@ -274,26 +254,55 @@ def drawShape(sketch=None, points=[], name="shape"):
 
 	# Add segments connecting each point
 	geometries = []
-	for i in range(len(points) - 1):
-		start_point = (points[i].get("x", 0), points[i].get("y", 0))
-		end_point = (points[i+1].get("x", 0), points[i+1].get("y", 0))
-		con = points[i+1].get("connector")
+	for i in range(len(lines)):
+		start_point = (lines[i].get("sx", 0), lines[i].get("sy", 0))
+		end_point = (lines[i].get("ex", 0), lines[i].get("ey", 0))
+		con = lines[i].get("connector")
+
 		# Check if this segment should be an arc
 		if con and con in "ac":
-			# Get center if provided, otherwise pass None
+			# Get center if provided, otherwise calculate it
 			center = None
-			if "cx" in points[i+1] and "cy" in points[i+1]:
-				center = Base.Vector(points[i+1]["cx"], points[i+1]["cy"], 0)
+			if "cx" in lines[i] and "cy" in lines[i]:
+				center = Base.Vector(lines[i]["cx"], lines[i]["cy"], 0)
 
-			# Calculate radius if center is provided
-			radius = None
-			if center:
-				# Calculate radius from center to start point
-				dx = start_point[0] - center.x
-				dy = start_point[1] - center.y
+			# Convert tuple points to vectors
+			start_vector = Base.Vector(start_point[0], start_point[1], 0)
+			end_vector = Base.Vector(end_point[0], end_point[1], 0)
 
-			# Add arc segment
-			geo_idx = addArcSegment(sketch, start=start_point, end=end_point, centre=center, direction=con=="a")
+			# Calculate radius from center to start point
+			dx = start_point[0] - center.x
+			dy = start_point[1] - center.y
+			radius = math.sqrt(dx**2 + dy**2)
+
+			# Create a circle
+			circle = Part.Circle(center, Base.Vector(0, 0, 1), radius)
+
+			# Calculate angles for start and end points
+			start_angle = math.atan2(start_point[1] - center.y, start_point[0] - center.x)
+			end_angle = math.atan2(end_point[1] - center.y, end_point[0] - center.x)
+
+			# Determine if arc should be counterclockwise (con == "a") or clockwise
+			is_ccw = (con == "a")
+
+			# Adjust angles based on direction
+			if is_ccw:  # Counterclockwise
+				if end_angle < start_angle:
+					end_angle += 2 * math.pi  # Ensure end_angle > start_angle for CCW
+			else:  # Clockwise
+				if end_angle > start_angle:
+					end_angle -= 2 * math.pi  # Ensure end_angle < start_angle for CW
+				elif end_angle == start_angle:
+					end_angle -= 2 * math.pi  # Full circle case
+
+			# Create the arc directly using Part.ArcOfCircle
+			arc = Part.ArcOfCircle(circle, start_angle, end_angle)
+
+			# Add to sketch
+			geo_idx = sketch.addGeometry(arc)
+
+			# Add radius constraint for the arc
+			#sketch.addConstraint(Sketcher.Constraint('Radius', geo_idx, radius))
 		else:
 			# Add line segment
 			geo_idx = sketch.addGeometry(Part.LineSegment(
@@ -301,23 +310,22 @@ def drawShape(sketch=None, points=[], name="shape"):
 				Base.Vector(end_point[0], end_point[1], 0)
 			))
 
-		geometries.append(geo_idx)
+			# Add distance constraint for the line if it's not too small
+			dx = end_point[0] - start_point[0]
+			dy = end_point[1] - start_point[1]
+			length = math.sqrt(dx**2 + dy**2)
+			if length > 0.1:  # Only add constraint if line is long enough
+				sketch.addConstraint(Sketcher.Constraint('Distance', geo_idx, length))
 
-	for i in range(len(geometries) - 1):
-		sketch.addConstraint(Sketcher.Constraint("Coincident", geometries[i], 2, geometries[i+1], 1))
-	# Close the loop with a constraint if we have more than one segment
-	if len(geometries) > 1:
-		sketch.addConstraint(Sketcher.Constraint("Coincident", geometries[-1], 2, geometries[0], 1))
+		geometries.append(geo_idx)
 
 	doc.recompute()
 	return sketch
 
 def draw_bolt(sections, name="cylinder_profile", start_y=0):
-	profile_points = []
+	profile_lines = []
 	current_y = start_y
-
-	# Start at the bottom center point
-	profile_points.append({"x": 0, "y": current_y})  # bottom center
+	prev_radius = None
 
 	# Process each section to create the profile
 	for i, section in enumerate(sections):
@@ -327,23 +335,31 @@ def draw_bolt(sections, name="cylinder_profile", start_y=0):
 		# Calculate radius
 		radius = diameter / 2
 
-		# Add the bottom-right corner of this section
-		profile_points.append({"x": radius, "y": current_y})  # bottom right of section
+		if i == 0:
+			# First line: from bottom center to bottom right of first section
+			profile_lines.append({"sx": 0, "sy": current_y, "ex": radius, "ey": current_y})
+		else:
+			# If this section has a different radius than the previous one,
+			# add a horizontal line to create a step
+			if radius != prev_radius:
+				profile_lines.append({"sx": prev_radius, "sy": current_y, "ex": radius, "ey": current_y})
+
+		# Line from bottom right to top right of this section
+		profile_lines.append({"sx": radius, "sy": current_y, "ex": radius, "ey": current_y + length})
 
 		# Update the current Y position
 		current_y += length
+		prev_radius = radius
 
-		# Add the top-right corner of this section
-		profile_points.append({"x": radius, "y": current_y})  # top right of section
+		# If this is the last section, add line from top right to top center
+		if i == len(sections) - 1:
+			profile_lines.append({"sx": radius, "sy": current_y, "ex": 0, "ey": current_y})
 
-	# Add the final point at the top center
-	profile_points.append({"x": 0, "y": current_y})  # top center
-
-	# Add closing point back to the start to complete the profile
-	profile_points.append({"x": 0, "y": start_y})  # back to bottom center (closing line)
+	# Add closing line from top center back to bottom center
+	profile_lines.append({"sx": 0, "sy": current_y, "ex": 0, "ey": start_y})
 
 	# Draw the profile using drawShape
-	sketch = drawShape(points=profile_points, name=name)
+	sketch = drawShape(lines=profile_lines, name=name)
 
 	doc.recompute()
 	revolution = doc.addObject("Part::Revolution", name)
@@ -353,6 +369,7 @@ def draw_bolt(sections, name="cylinder_profile", start_y=0):
 	revolution.Angle = 360.0
 	sketch.Visibility = False
 	doc.recompute()
+	# exportSketch(sketch)
 	return revolution
 
 def getDocumentName():
@@ -425,6 +442,7 @@ def create_top_az_disk():
 	pad.Visibility = True
 	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
 	doc.recompute()
+	exportSketch(sketch)
 
 def create_bottom_az_disk():
 	# Create a new sketch
@@ -482,6 +500,7 @@ def create_bottom_az_disk():
 	pad.Visibility = True
 	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
 	doc.recompute()
+	exportSketch(sketch)
 
 def create_az_flange(number):
 	"""
@@ -495,28 +514,26 @@ def create_az_flange(number):
 	height = 70  # height of rectangle
 	cut = 20     # size of corner cut
 
-	# Define the flange profile points using the dictionary format
-	# Explicitly specify all connections including the closing connection
-	flange_profile = [
-		{"x": 0, "y": 0},                # bottom left
-		{"x": width, "y": 0},            # bottom right (line from bottom left)
-		{"x": width, "y": height-cut},   # top right before cut (line from bottom right)
-		{"x": width-cut, "y": height},   # top right after cut (line from top right before cut)
-		{"x": 0, "y": height},           # top left (line from top right after cut)
-		{"x": 0, "y": 0}                 # back to bottom left (closing line)
+	# Define the flange profile as lines
+	flange_lines = [
+		# Bottom edge: bottom left to bottom right
+		{"sx": 0, "sy": 0, "ex": width, "ey": 0},
+
+		# Right edge: bottom right to top right before cut
+		{"sx": width, "sy": 0, "ex": width, "ey": height-cut},
+
+		# Cut edge: top right before cut to top right after cut
+		{"sx": width, "sy": height-cut, "ex": width-cut, "ey": height},
+
+		# Top edge: top right after cut to top left
+		{"sx": width-cut, "sy": height, "ex": 0, "ey": height},
+
+		# Left edge: top left to bottom left (closing line)
+		{"sx": 0, "sy": height, "ex": 0, "ey": 0}
 	]
 
 	# Draw the flange profile using drawShape
-	sketch = drawShape(points=flange_profile, name="az_flange_" + str(number))
-
-	# Rotate the sketch to the XZ plane
-	rotateSketch(sketch, plane='xz', angle=90)
-
-	# Position the sketch based on the flange number
-	if (number == 1):
-		moveSketch(sketch, x=-width/2, y=-26, z=DISK_THICKNESS * 2)
-	else:
-		moveSketch(sketch, x=-width/2, y=26, z=DISK_THICKNESS * 2)
+	sketch = drawShape(lines=flange_lines, name="az_flange_" + str(number))
 
 	# Add pivot holes
 	# Add a 10mm diameter hole near the 45-degree cut corner
@@ -527,6 +544,18 @@ def create_az_flange(number):
 	slot_radius = 20
 	makeHole(sketch, hole_x, hole_y, hole_radius)
 	cutSlot(sketch, slot_width=SLOT_WIDTH, slot_radius=slot_radius, cx=hole_x, cy=hole_y, start_angle=250, end_angle=15)
+
+	# Export the sketch before rotation for proper top view
+	exportSketch(sketch)
+
+	# Rotate the sketch to the XZ plane
+	rotateSketch(sketch, plane='xz', angle=90)
+
+	# Position the sketch based on the flange number
+	if (number == 1):
+		moveSketch(sketch, x=-width/2, y=-26, z=DISK_THICKNESS * 2)
+	else:
+		moveSketch(sketch, x=-width/2, y=26, z=DISK_THICKNESS * 2)
 
 	# Create the pad
 	pad = doc.addObject("PartDesign::Pad", "az_flange_pad_" + str(number))
@@ -540,29 +569,39 @@ def create_az_flange(number):
 	pad.ViewObject.Transparency = 70
 
 	doc.recompute()
-
 	return pad
 
 def create_alt_flange(number):
 	# Define dimensions
 	height = 50      # rectangle height
 	width = 50       # rectangle width
-	# Define the flange profile points using the dictionary format
-	# Explicitly specify all connections including the closing connection
-	p = [
-		{"x": 0, "y": height/2},         # top left
-		{"x": 0, "y": -height/2},        # bottom left (line from top left)
-		{"x": width, "y": -height/2},    # bottom right (line from bottom left)
-		{"x": width, "y": height/2},     # top right (line from bottom right)
-		{"x": 0, "y": height/2}          # back to top left (closing line)
+
+	# Define the flange profile as lines
+	flange_lines = [
+		# Top edge: top left to bottom left
+		{"sx": 0, "sy": height/2, "ex": 0, "ey": -height/2},
+
+		# Bottom edge: bottom left to bottom right
+		{"sx": 0, "sy": -height/2, "ex": width, "ey": -height/2},
+
+		# Right edge: bottom right to top right
+		{"sx": width, "sy": -height/2, "ex": width, "ey": height/2},
+
+		# Top edge: top right to top left (closing line)
+		{"sx": width, "sy": height/2, "ex": 0, "ey": height/2}
 	]
+
 	# Draw the flange profile using drawShape
-	sketch = drawShape(points=p, name="alt_flange_" + str(number))
+	sketch = drawShape(lines=flange_lines, name="alt_flange_" + str(number))
+
 	# Add holes to the sketch
 	hole_x = 25
 	hole_y = 0
 	makeHole(sketch, x=hole_x, y=hole_y, radius=5.01)
 	makeHole(sketch, x=hole_x + 20 - (SLOT_WIDTH/2), y=hole_y, radius=TAPPING_SIZE_6 / 2)
+
+	# Export the sketch before rotation for proper top view
+	exportSketch(sketch)
 
 	rotateSketch(sketch, plane='xz', angle=90)
 
