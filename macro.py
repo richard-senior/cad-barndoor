@@ -509,12 +509,17 @@ def create_az_flange(number):
 	Args:
 		number: Flange number (1 or 2)
 	"""
-	# Define dimensions
-	width = 70   # width of rectangle - matches chord length
-	height = 70  # height of rectangle
-	cut = 20     # size of corner cut
+	width = 70
+	height = 70
+	hole_radius = 5.01
+	# Position the hole center 15mm from both edges (to leave enough material)
+	hole_x = 25
+	hole_y = height - 25
+	slot_radius = 20
+	cut = 20
+	arc_radius = 25
 
-	# Define the flange profile as lines
+	# Define the flange profile as lines with an arc in the top-left corner
 	flange_lines = [
 		# Bottom edge: bottom left to bottom right
 		{"sx": 0, "sy": 0, "ex": width, "ey": 0},
@@ -525,23 +530,18 @@ def create_az_flange(number):
 		# Cut edge: top right before cut to top right after cut
 		{"sx": width, "sy": height-cut, "ex": width-cut, "ey": height},
 
-		# Top edge: top right after cut to top left
-		{"sx": width-cut, "sy": height, "ex": 0, "ey": height},
+		# Top edge: top right after cut to top left + arc_radius
+		{"sx": width-cut, "sy": height, "ex": arc_radius, "ey": height},
 
-		# Left edge: top left to bottom left (closing line)
-		{"sx": 0, "sy": height, "ex": 0, "ey": 0}
+		# Arc: from top edge to left edge (12 o'clock to 9 o'clock, anticlockwise)
+		{"sx": arc_radius, "sy": height, "ex": 0, "ey": height - arc_radius, "connector": "a", "cx": arc_radius, "cy": height - arc_radius},
+
+		# Left edge: arc end to bottom left
+		{"sx": 0, "sy": height - arc_radius, "ex": 0, "ey": 0}
 	]
 
 	# Draw the flange profile using drawShape
 	sketch = drawShape(lines=flange_lines, name="az_flange_" + str(number))
-
-	# Add pivot holes
-	# Add a 10mm diameter hole near the 45-degree cut corner
-	hole_radius = 5.01  # 10mm diameter = 5mm radius
-	# Position the hole center 15mm from both edges (to leave enough material)
-	hole_x = 25  # Move in from the cut corner
-	hole_y = height - 25  # Move down from the top
-	slot_radius = 20
 	makeHole(sketch, hole_x, hole_y, hole_radius)
 	cutSlot(sketch, slot_width=SLOT_WIDTH, slot_radius=slot_radius, cx=hole_x, cy=hole_y, start_angle=250, end_angle=15)
 
@@ -575,11 +575,13 @@ def create_alt_flange(number):
 	# Define dimensions
 	height = 50      # rectangle height
 	width = 50       # rectangle width
+	hole_x = 25      # x position of the large hole
+	hole_y = 0       # y position of the large hole
 
-	# Define the flange profile as lines
+	# Define the flange profile as lines with an arc centered on the large hole
 	flange_lines = [
-		# Top edge: top left to bottom left
-		{"sx": 0, "sy": height/2, "ex": 0, "ey": -height/2},
+		# Left edge: arc end to bottom left
+		{"sx": 0, "sy": hole_y, "ex": 0, "ey": -height/2},
 
 		# Bottom edge: bottom left to bottom right
 		{"sx": 0, "sy": -height/2, "ex": width, "ey": -height/2},
@@ -587,16 +589,17 @@ def create_alt_flange(number):
 		# Right edge: bottom right to top right
 		{"sx": width, "sy": -height/2, "ex": width, "ey": height/2},
 
-		# Top edge: top right to top left (closing line)
-		{"sx": width, "sy": height/2, "ex": 0, "ey": height/2}
+		# Top edge: top right to arc start
+		{"sx": width, "sy": height/2, "ex": hole_x, "ey": height/2},
+
+		# Arc: from top edge to left edge (12 o'clock to 9 o'clock, anticlockwise)
+		{"sx": hole_x, "sy": height/2, "ex": 0, "ey": hole_y, "connector": "a", "cx": hole_x, "cy": hole_y}
 	]
 
 	# Draw the flange profile using drawShape
 	sketch = drawShape(lines=flange_lines, name="alt_flange_" + str(number))
 
 	# Add holes to the sketch
-	hole_x = 25
-	hole_y = 0
 	makeHole(sketch, x=hole_x, y=hole_y, radius=5.01)
 	makeHole(sketch, x=hole_x + 20 - (SLOT_WIDTH/2), y=hole_y, radius=TAPPING_SIZE_6 / 2)
 
@@ -622,6 +625,46 @@ def create_alt_flange(number):
 	sketch.Visibility = False
 	pad.Visibility = True
 	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
+	doc.recompute()
+	return pad
+
+def create_eq_base():
+	# Define dimensions
+	height = 50      # rectangle height
+	width = 100       # rectangle width
+
+	# Define the flange profile as lines with an arc centered on the large hole
+	lines = [
+        # Bottom edge: bottom left to bottom right
+        {"sx": 0, "sy": 0, "ex": width, "ey": 0},
+
+        # Right edge: bottom right to top right
+        {"sx": width, "sy": 0, "ex": width, "ey": height},
+
+        # Top edge: top right to top left
+        {"sx": width, "sy": height, "ex": 0, "ey": height},
+
+        # Left edge: top left to bottom left (closing line)
+        {"sx": 0, "sy": height, "ex": 0, "ey": 0}
+	]
+
+	# Draw the flange profile using drawShape
+	sketch = drawShape(lines=lines, name="eq_base")
+
+	# Export the sketch before rotation for proper top view
+	exportSketch(sketch)
+
+	rotateSketch(sketch, plane='xy', angle=90)
+	moveSketch(sketch, x=15, y=-50, z=82)
+
+	# Create the pad
+	pad = doc.addObject("PartDesign::Pad", "eq_base_pad")
+	pad.Profile = sketch
+	pad.Length = DISK_THICKNESS
+	sketch.Visibility = False
+	pad.Visibility = True
+	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
+	pad.ViewObject.Transparency = 70
 	doc.recompute()
 	return pad
 
@@ -666,6 +709,7 @@ try:
 	create_az_flange(2)
 	create_alt_flange(1)
 	create_alt_flange(2)
+	create_eq_base()
 	FreeCADGui.ActiveDocument.ActiveView.setAnimationEnabled(True)
 except Exception as e:
 	print(f"Main execution error: {str(e)}")
