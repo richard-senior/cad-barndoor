@@ -1,7 +1,7 @@
 *.svg
 *.FCStd
 example.py
-
+*.step
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

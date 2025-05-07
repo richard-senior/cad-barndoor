@@ -15,6 +15,7 @@ DOCUMENT_NAME="BarnDoor"
 # Dimensions in mm
 DISK_DIAMETER = 100
 DISK_THICKNESS = 6
+TAPPING_SIZE_10 = 8.5
 TAPPING_SIZE_8 = 6.8
 TAPPING_SIZE_6 = 5
 SLOT_RADIUS = 45
@@ -34,7 +35,6 @@ def exportSketch(sketch):
 		Base.Vector(0, 0, 0),
 		Base.Rotation(0, 0, 0, 1)  # Identity rotation
 	)
-
 	try:
 		# Apply the default placement for export
 		sketch.Placement = default_placement
@@ -43,10 +43,7 @@ def exportSketch(sketch):
 		# Use the user's home directory to ensure write permissions
 		home_dir = os.path.expanduser("~")
 		path = os.path.join(home_dir, "barndoor", "cad-barndoor", f"{sketch.Name}.svg")
-		print("Exporting sketch to: " + path)
-
 		importSVG.export(__objs__, path)
-		print(f"Successfully exported to {path}")
 	except Exception as e:
 		print(f"Export error: {str(e)}")
 		# Try alternative location directly in home directory
@@ -54,7 +51,6 @@ def exportSketch(sketch):
 		print(f"Trying alternative path: {alt_path}")
 		try:
 			importSVG.export(__objs__, alt_path)
-			print(f"Successfully exported to {alt_path}")
 		except Exception as e2:
 			print(f"Alternative export also failed: {str(e2)}")
 	finally:
@@ -199,6 +195,9 @@ def rotateObject(obj, plane='xy', angle=90):
 
 	# Recompute the document to update the view
 	doc.recompute()
+
+
+
 
 def rotateSketch(sketch, plane='xy', angle=90):
 	"""
@@ -367,6 +366,7 @@ def draw_bolt(sections, name="cylinder_profile", start_y=0):
 	revolution.Axis = Base.Vector(0.0, 1.0, 0.0)  # Y axis
 	revolution.Base = Base.Vector(0.0, 0.0, 0.0)
 	revolution.Angle = 360.0
+	revolution.ViewObject.Transparency = 70
 	sketch.Visibility = False
 	doc.recompute()
 	# exportSketch(sketch)
@@ -668,6 +668,60 @@ def create_eq_base():
 	doc.recompute()
 	return pad
 
+def create_eq_base_flange(number):
+	# Define dimensions
+	height = 25      # rectangle height
+	width = 25       # rectangle width
+
+	# Define the flange profile as lines with an arc centered on the large hole
+	lines = [
+        # Bottom edge: bottom left to bottom right
+        {"sx": 0, "sy": 0, "ex": width, "ey": 0},
+
+        # Right edge: bottom right to top right
+        {"sx": width, "sy": 0, "ex": width, "ey": height / 2},
+
+        # Top edge radius
+        # {"sx": width, "sy": height, "ex": 0, "ey": height},
+		{"sx": width, "sy": height / 2, "ex": 0, "ey": height / 2, "connector": "c", "cx": width / 2, "cy": height / 2},
+
+        # Left edge: top left to bottom left (closing line)
+        {"sx": 0, "sy": height / 2, "ex": 0, "ey": 0}
+	]
+
+	# Draw the flange profile using drawShape
+	sketch = drawShape(lines=lines, name="eq_base_flange_" + str(number))
+	holeRad=TAPPING_SIZE_10/2
+
+	makeHole(sketch, x=width/2, y=height/2, radius=holeRad)
+	# Export the sketch before rotation for proper top view
+	exportSketch(sketch)
+
+	rotateSketch(sketch, plane='xz', angle=90)
+	rotateSketch(sketch, plane='xy', angle=-90)
+	if number == 1:
+		moveSketch(sketch, x=15, y=-25, z=88)
+	elif number == 2:
+		moveSketch(sketch, x=-29, y=-25, z=88)
+	elif number == 3:
+		rotateSketch(sketch, plane='xz', angle=180)
+		moveSketch(sketch, x=9, y=-25 - width, z=88 + height)
+	elif number == 4:
+		rotateSketch(sketch, plane='xz', angle=180)
+		moveSketch(sketch, x=-23, y=-25 - width, z=88 + height)
+
+
+	# Create the pad
+	pad = doc.addObject("PartDesign::Pad", "eq_base_pad_" + str(number))
+	pad.Profile = sketch
+	pad.Length = DISK_THICKNESS
+	sketch.Visibility = False
+	pad.Visibility = True
+	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
+	# pad.ViewObject.Transparency = 70
+	doc.recompute()
+	return pad
+
 def deleteExistingDocument(name):
 	"""
 	Deletes any existing document with the specified name
@@ -710,6 +764,14 @@ try:
 	create_alt_flange(1)
 	create_alt_flange(2)
 	create_eq_base()
+	create_eq_base_flange(1)
+	create_eq_base_flange(2)
+	create_eq_base_flange(3)
+	create_eq_base_flange(4)
+	# create eq axis pin
+	eq_axis = draw_bolt(sections=[{"d": 10, "l": 2}, {"d": 9.6, "l": 1.1}, {"d": 10, "l": 54}, {"d": 9.6, "l": 1.1}, {"d": 10, "l": 2}], name="alt_axis")
+	rotateObject(eq_axis, plane='xy', angle=90)
+	moveObject(eq_axis, x=20, y=-37.5, z=100.5)
 	FreeCADGui.ActiveDocument.ActiveView.setAnimationEnabled(True)
 except Exception as e:
 	print(f"Main execution error: {str(e)}")
