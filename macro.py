@@ -722,6 +722,46 @@ def create_eq_base_flange(number):
 	doc.recompute()
 	return pad
 
+def create_eq_flap():
+	# Define dimensions
+	height = 50      # rectangle height
+	width = 100       # rectangle width
+
+	# Define the flange profile as lines with an arc centered on the large hole
+	lines = [
+        # Bottom edge: bottom left to bottom right
+        {"sx": 0, "sy": 0, "ex": width, "ey": 0},
+
+        # Right edge: bottom right to top right
+        {"sx": width, "sy": 0, "ex": width, "ey": height},
+
+        # Top edge: top right to top left
+        {"sx": width, "sy": height, "ex": 0, "ey": height},
+
+        # Left edge: top left to bottom left (closing line)
+        {"sx": 0, "sy": height, "ex": 0, "ey": 0}
+	]
+
+	# Draw the flange profile using drawShape
+	sketch = drawShape(lines=lines, name="eq_flap")
+
+	# Export the sketch before rotation for proper top view
+	exportSketch(sketch)
+
+	rotateSketch(sketch, plane='xy', angle=90)
+	moveSketch(sketch, x=15, y=-50, z=113)
+
+	# Create the pad
+	pad = doc.addObject("PartDesign::Pad", "eq_flap_pad")
+	pad.Profile = sketch
+	pad.Length = DISK_THICKNESS
+	sketch.Visibility = False
+	pad.Visibility = True
+	pad.ViewObject.ShapeColor = (0.8, 0.8, 0.8)  # Light gray
+	pad.ViewObject.Transparency = 50
+	doc.recompute()
+	return pad
+
 def deleteExistingDocument(name):
 	"""
 	Deletes any existing document with the specified name
@@ -768,6 +808,7 @@ try:
 	create_eq_base_flange(2)
 	create_eq_base_flange(3)
 	create_eq_base_flange(4)
+	create_eq_flap()
 	# create eq axis pin
 	eq_axis = draw_bolt(sections=[{"d": 10, "l": 2}, {"d": 9.6, "l": 1.1}, {"d": 10, "l": 54}, {"d": 9.6, "l": 1.1}, {"d": 10, "l": 2}], name="alt_axis")
 	rotateObject(eq_axis, plane='xy', angle=90)
